@@ -37,6 +37,8 @@ def parse_args():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", required=True)
     p.add_argument("--max-steps", type=int, default=512)
+    p.add_argument("--exec-horizon", type=int, default=None,
+                   help="execute first k of each chunk (Isaac-GR00T protocol: 8)")
     p.add_argument("--pladis-install", action="store_true")
     p.add_argument("--pladis-scale", type=float, default=0.0)
     p.add_argument("--pladis-qgroup", default="all", choices=["all", "state", "action"])
@@ -80,6 +82,7 @@ def main():
             model,
             episode_seed=args.seed * 1_000_003 + spec.episode,
             max_steps=args.max_steps,
+            exec_horizon=args.exec_horizon,
         )
         log.log(r)
         n_run += 1

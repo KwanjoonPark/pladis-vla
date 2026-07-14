@@ -93,11 +93,17 @@ def run_episode(
     episode_seed: int,
     max_steps: int = 512,
     stop_on_success: bool = True,
+    exec_horizon: Optional[int] = None,
 ) -> EpisodeResult:
+    """exec_horizon: execute only the first k actions of each predicted chunk
+    (re-plan every k steps). The validated Isaac-GR00T LIBERO protocol uses 8
+    of 16; None executes the full chunk."""
     t0 = time.time()
     raw_obs, instruction = sess.reset(spec, init_states)
 
     chunk_len = int(model.output_action_chunks)
+    if exec_horizon is not None:
+        chunk_len = min(chunk_len, int(exec_horizon))
     success_once = False
     steps = 0
     while steps < max_steps:
