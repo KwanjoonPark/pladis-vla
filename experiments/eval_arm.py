@@ -33,7 +33,9 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--suite", default="libero_10")
     p.add_argument("--axis", default="language", help="language|light|... or 'none'")
-    p.add_argument("--episodes", type=int, required=True)
+    p.add_argument("--episodes", type=int, required=True,
+                   help="0 = every curated task exactly once")
+    p.add_argument("--model-path", default=MODEL)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", required=True)
     p.add_argument("--max-steps", type=int, default=512)
@@ -51,7 +53,7 @@ def main():
     args = parse_args()
     axis = None if args.axis == "none" else args.axis
 
-    model = load_gr00t_n1d7(MODEL, BACKBONE)
+    model = load_gr00t_n1d7(args.model_path, BACKBONE)
     if args.pladis_install:
         from pladis.attn_gr00t import install_pladis
 
@@ -67,7 +69,8 @@ def main():
         print("[arm] vanilla (no hook)", flush=True)
 
     ts = LiberoPlusTaskSet(args.suite, axis)
-    sched = ts.schedule(args.episodes, seed=args.seed)
+    n_eps = len(ts.task_names) if args.episodes == 0 else args.episodes
+    sched = ts.schedule(n_eps, seed=args.seed)
     log = EpisodeLogger(args.out, resume=True)
     todo = [s for s in sched if s.episode not in log.done_episodes]
     print(f"[arm] {len(todo)}/{len(sched)} episodes to run -> {args.out}", flush=True)
