@@ -59,6 +59,13 @@ def load_gr00t_n1d7(
     backbone_model_path: str,
     device: str = "cuda",
 ):
+    # ORDER MATTERS: MagickWand's dlopen fails if torch/cv2 have already
+    # loaded conflicting shared libraries into this process (verified
+    # 2026-07-14: wand imports fine standalone, fails after model load).
+    # RLinf never saw this because env and rollout were separate Ray
+    # processes. Preload the sim stack before any model imports.
+    import liberoplus.liberoplus.envs  # noqa: F401  (pulls in wand)
+
     if RLINF_PATH not in sys.path:
         sys.path.insert(0, RLINF_PATH)
 
@@ -73,5 +80,6 @@ def load_gr00t_n1d7(
         "pladis.attn_gr00t.install_pladis(), not via RLinf's env-var gate."
     )
     model = get_model(cfg, torch_dtype=torch.bfloat16)
-    model = model.to(device).eval()
+    model = model.to(device)
+    model.eval()  # RLinf's eval() override returns None — do not chain
     return model
