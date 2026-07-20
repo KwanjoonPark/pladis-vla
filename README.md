@@ -50,7 +50,7 @@ results/       (gitignore) 실행 산출물 — 로컬 전용
 
 | 경로 | 내용 |
 |---|---|
-| `../RLinf` | 모델 로딩 코드(gr00t_n1d7/openpi 래퍼) + venv 2개(`gr00t_n1d7/`, `openpi/`) |
+| `../RLinf` | **venv 호스트로만 사용** (RLinf 코드 import 없음 — 서빙 래퍼는 −35pp 버그로 공식 Gr00tPolicy 어댑터로 대체됨). `gr00t_n1d7/` = 실행 파이썬(run.sh가 사용; 공식 `gr00t` 패키지 체크아웃 `gr00t_n1d7/gr00t/` 편집설치, robosuite 1.4.1 · diffusers 0.35.1 · entmax 포함), `openpi/` = π0 트랙용 |
 | `../LIBERO-plus` | 벤치마크 체크아웃 (bddl/init/assets, `.magick` ImageMagick) |
 | `../models` | 체크포인트: GR00T-N1.7-LIBERO, RLinf-Pi0-LIBERO-Long-SFT |
 | `~/.cache/huggingface` | Cosmos-Reason2-2B 백본 |
