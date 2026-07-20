@@ -11,6 +11,14 @@ Contract (docs/benchmark_facts.md):
   * Fixed init states: the base task's `.pruned_init` (50, D) applied via
     set_init_state, with a hard dim assert (catches scene-mismatched axes
     like `_add` where the state vector grows).
+  * EXCEPT scene-altering axes (layout): the BDDL itself moves the placement
+    regions (`_level_sample`) or adds objects (`_add`), so applying the base
+    task's init states would silently restore the original layout (the
+    perturbation-not-delivered failure mode) or dim-crash on `_add`. There
+    the scene comes from the BDDL's own placement sampling, made
+    deterministic and arm-paired by reseeding right before EVERY reset:
+    bddl_base_domain.seed(s) is np.random.seed(s) and robosuite placement
+    samplers draw from that global stream.
   * The schedule is an explicit, seeded, logged list of EpisodeSpec — no
     implicit `(seed+idx) % len` scattered in env code.
   * Plain bddl paths carry no hidden runtime randomizers (env_wrapper only
@@ -34,16 +42,33 @@ AXIS_TO_CATEGORY = {
     "light": "Light Conditions",
     "background": "Background Textures",
     "layout": "Objects Layout",
-    # camera / robot / noise are runtime axes (pseudo-filename encoded);
-    # supported by env_wrapper but not wired into schedules yet.
+    # robot is a runtime axis: the curated name's `_initstate_<k>` (k>0) makes
+    # env_wrapper swap in a Panda{k} robot class whose init_qpos is perturbed
+    # (levels ||d||=0.1..0.5 by k-century, envs/robots/new_init.py). Delivery
+    # under the official protocol (reset -> set_init_state(base) -> settle,
+    # LIBERO-plus README: "identical to LIBERO, num_trials=1") is INDIRECT:
+    # set_init_state snaps the arm back to the base pose, but the OSC
+    # controller's nullspace reference (initial_joint, captured at reset =
+    # perturbed pose; set_init_state never updates it) pulls toward the
+    # perturbed config through the whole episode, and the settle steps recover
+    # part of the pose offset. Same base init states as axis=None -> scene
+    # stays paired with the original arm. Gates: verify_robot_axis.py.
+    "robot": "Robot Initial States",
+    # camera / noise runtime axes: supported by env_wrapper, not wired yet.
 }
+
+# Axes whose BDDL changes the scene itself (moved regions / added objects):
+# base-task init states must NOT be applied (see module docstring). The
+# curated layout names carry no `_view_..._initstate_` runtime tail.
+SCENE_ALTERING_AXES = frozenset({"layout"})
 
 # Content-variant markers, exhaustively enumerated from task_classification.json
 # (libero_10: language 383, light 274, add 173, table 168, level+sample 139,
 # tb 121; the remaining 1,261 have no marker = runtime-only axes). Note the
-# layout combo form "_level3_sample7" — digits attach directly.
+# layout combo form "_level3_sample7" — digits attach directly. libero_goal
+# layout uses "_moved_level3_sample7" (185 entries, goal-only; no bare _moved).
 _VARIANT_MARKER = re.compile(
-    r"(_(language|light|table|tb|add)_\d+|_level\d+_sample\d+)$"
+    r"(_(language|light|table|tb|add)_\d+|(_moved)?_level\d+_sample\d+)$"
 )
 
 # Curated task names canonically carry a runtime-axis pseudo-suffix, e.g.
@@ -66,7 +91,10 @@ class EpisodeSpec:
     task_name: str  # curated variant name == bddl stem (or base name for axis=None)
     base_task: str  # variant name with the axis marker stripped
     bddl_path: str
-    init_state_id: int  # row of the base task's pruned_init
+    # row of the base task's pruned_init; scene-altering axes have no fixed
+    # states, there it is the per-variant visit counter (bookkeeping only —
+    # the reset seed keys on `episode`)
+    init_state_id: int
 
 
 class LiberoPlusTaskSet:
@@ -101,20 +129,25 @@ class LiberoPlusTaskSet:
             # full pseudo path: env_wrapper parses (neutral) runtime params from it
             self._bddl[name] = os.path.join(self.bddl_dir, name + ".bddl")
 
-        # base-task pruned init states, loaded eagerly (10 small files)
+        # base-task pruned init states, loaded eagerly (10 small files);
+        # scene-altering axes use none (BDDL placement sampling instead)
+        self.scene_altering = axis in SCENE_ALTERING_AXES
         self._init_states: dict[str, np.ndarray] = {}
-        for name in names:
-            base = self.base_task_of(name)
-            if base not in self._init_states:
-                p = os.path.join(self.init_dir, base + ".pruned_init")
-                assert os.path.exists(p), f"missing init states: {p}"
-                states = torch.load(p, map_location="cpu", weights_only=False)
-                self._init_states[base] = np.asarray(states, dtype=np.float64)
+        if not self.scene_altering:
+            for name in names:
+                base = self.base_task_of(name)
+                if base not in self._init_states:
+                    p = os.path.join(self.init_dir, base + ".pruned_init")
+                    assert os.path.exists(p), f"missing init states: {p}"
+                    states = torch.load(p, map_location="cpu", weights_only=False)
+                    self._init_states[base] = np.asarray(states, dtype=np.float64)
 
     def base_task_of(self, name: str) -> str:
         return _VARIANT_MARKER.sub("", _RUNTIME_TAIL.sub("", name))
 
-    def init_states_of(self, name: str) -> np.ndarray:
+    def init_states_of(self, name: str) -> Optional[np.ndarray]:
+        if self.scene_altering:
+            return None
         return self._init_states[self.base_task_of(name)]
 
     def schedule(self, n_episodes: int, seed: int) -> list[EpisodeSpec]:
@@ -131,14 +164,17 @@ class LiberoPlusTaskSet:
             name = self.task_names[order[i % len(order)]]
             k = visits.get(name, 0)
             visits[name] = k + 1
-            n_states = len(self.init_states_of(name))
+            if self.scene_altering:
+                init_state_id = seed + k  # visit counter, no fixed-state list
+            else:
+                init_state_id = (seed + k) % len(self.init_states_of(name))
             specs.append(
                 EpisodeSpec(
                     episode=i,
                     task_name=name,
                     base_task=self.base_task_of(name),
                     bddl_path=self._bddl[name],
-                    init_state_id=(seed + k) % n_states,
+                    init_state_id=init_state_id,
                 )
             )
         return specs
@@ -172,19 +208,29 @@ class LiberoPlusSession:
         self._env.seed(self.seed)
         self._loaded_bddl = bddl_path
 
-    def reset(self, spec: EpisodeSpec, init_states: np.ndarray):
-        """Returns (obs, instruction). Instruction is liberoplus's bddl parse."""
+    def reset(self, spec: EpisodeSpec, init_states: Optional[np.ndarray]):
+        """Returns (obs, instruction). Instruction is liberoplus's bddl parse.
+
+        init_states None = scene-altering axis: the episode scene IS the
+        BDDL's placement sampling. Reseed the global np.random stream (what
+        robosuite samplers draw from) right before reset — same value in
+        every arm (keys on run seed + schedule position only), so arms see
+        identical initial scenes; same convention as the flow-noise pin."""
         if spec.bddl_path != self._loaded_bddl:
             self._load(spec.bddl_path)
-        self._env.reset()
 
-        state = init_states[spec.init_state_id]
-        sim_dim = len(self._env.env.sim.get_state().flatten())
-        assert state.shape[-1] == sim_dim, (
-            f"init state dim {state.shape[-1]} != sim dim {sim_dim} for "
-            f"{spec.task_name} — scene-altering axis? (see benchmark_facts.md)"
-        )
-        obs = self._env.set_init_state(state)
+        if init_states is None:
+            self._env.seed(self.seed * 1_000_003 + spec.episode)
+            obs = self._env.reset()
+        else:
+            self._env.reset()
+            state = init_states[spec.init_state_id]
+            sim_dim = len(self._env.env.sim.get_state().flatten())
+            assert state.shape[-1] == sim_dim, (
+                f"init state dim {state.shape[-1]} != sim dim {sim_dim} for "
+                f"{spec.task_name} — scene-altering axis? (see benchmark_facts.md)"
+            )
+            obs = self._env.set_init_state(state)
         for _ in range(self.SETTLE_STEPS):
             obs, _, _, _ = self._env.step(self.NOOP)
 

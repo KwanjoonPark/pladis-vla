@@ -1,6 +1,11 @@
-results/
+# python
 __pycache__/
 *.pyc
-*.log
-*.mp4
+*.egg-info/
 .DS_Store
+
+# experiment outputs stay local-only (eplogs, videos, console logs)
+results/
+*.mp4
+*.log
+*.out

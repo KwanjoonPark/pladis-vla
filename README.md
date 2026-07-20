@@ -15,24 +15,36 @@ LIBERO-plus perturbation 축에서 효과를 측정하는 실험 저장소.
 
 ```
 pladis/        방법론 훅 (검증 완료본을 RLinf 패치에서 이전)
-  attn_gr00t.py   GR00T N1.7 DiT용 (qgroup/kind 게이팅, 07-14 마스크 수정 포함)
+  attn_gr00t.py   GR00T N1.7 DiT용 (qgroup/kind 게이팅; λ=0은 네이티브 SDPA 위임
+                  = vanilla와 비트 동일, 원저 PLADIS의 λ=0 게이트 의미론)
   attn_pi0.py     π0/π0.5 gemma용 (n_lang 자동 유도 포함)
 harness/       우리 소유의 최소 평가 루프 (Ray 없음)
-  env.py          bddl 선택 + (:language) 파싱 → 지시문을 명시적으로 전달  [작성 예정]
-  rollout.py      obs → policy → step 단순 루프, 에피소드별 노이즈 핀     [작성 예정]
-  eplog.py        에피소드 단위 TSV 기록                                  [작성 예정]
-experiments/   스윕 정의
+  env.py          큐레이션 스케줄 + bddl/init 해석, 축별 전달 규약
+                  (language/light/background=init 적용, layout=scene-altering
+                  reseed, robot=런타임 initstate → 공식 프로토콜 그대로)
+  rollout.py      obs → policy → step 루프, 매 chunk 노이즈 핀, 영상 오버레이
+  eplog.py        에피소드 단위 TSV 원장 (resume의 기준)
+  model_gr00t.py  공식 Gr00tPolicy 어댑터 (RLinf 서빙 래퍼 -35pp 버그 대체)
+  video.py        agentview+wrist mp4 녹화 (결정론 무접촉 검증됨)
+experiments/   run.sh(env 래퍼) + eval_arm.py(범용 러너) + sweep_n17_*.sh(드라이버)
+               + verify_*.py(게이트: base0 비트동일 / layout / robot 축)
 analysis/      집계·paired 검정(McNemar)·그림
-results/       (gitignore) 실행 산출물
+results/       (gitignore) 실행 산출물 — 로컬 전용
 ```
 
 ## 검증 게이트 (순서 고정)
 
-1. **앵커**: 표준 LIBERO-10에서 GR00T N1.7 모델카드 수치 재현 — 하네스 자체 검증.
+1. **앵커**: 표준 LIBERO-10에서 GR00T N1.7 모델카드 수치 재현 — 하네스 자체 검증
+   (공식 Gr00tPolicy 경로에서 91% @ n=100, 공식 94.35%와 표본오차 내).
 2. **지시문 전달 스모크**: `_language` 변형 로드 시 모델 입력 문자열이 실제로
-   perturbed 문장인지 로그로 눈 확인.
-3. **λ=0 parity**: 훅 설치+λ=0 ≡ 미설치 (poisoned-mask 테스트 + 실전 paired 비교).
-4. 그 후에만 스윕.
+   perturbed 문장인지 eplog로 확인.
+3. **λ=0 parity**: 훅 설치+λ=0 ≡ 미설치, **비트 단위**(`verify_base0_parity.py`
+   모듈 torch.equal + 롤아웃 eplog 완전일치). λ=0이 네이티브 SDPA로 위임되므로
+   성립 — 원저 PLADIS도 λ=0이면 프로세서 교체 자체를 안 함.
+4. **축별 전달 게이트**: 교란이 실제로 모델에 도달하는지 실측
+   (`verify_layout_axis.py`, `verify_robot_axis.py` — 결정론 bit-일치·교란 실재·
+   장면 페어링·풀경로 모델 패리티).
+5. 그 후에만 스윕 (`experiments/sweep_n17_<axis>.sh`).
 
 ## 외부 의존 (이 repo에 없는 것)
 

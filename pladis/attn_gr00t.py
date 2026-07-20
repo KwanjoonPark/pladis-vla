@@ -8,7 +8,12 @@ the dense softmax map with a sparse (entmax15/sparsemax) map:
 
     attn = dense + lambda * (sparse - dense)
 
-``pladis_scale == 0`` -> exact vanilla softmax (parity check).
+``pladis_scale == 0`` -> delegate to the same fused ``F.scaled_dot_product_attention``
+call diffusers' AttnProcessor2_0 makes, so base0 is BIT-identical to vanilla. This is
+the official PLADIS semantics: lambda=0 never leaves the native SDPA path (the repo
+gates the processor swap on ``do_sparse_guidance = pladis_scale > 0``,
+PLADIS/pipeline/pipeline_sdxl.py:1215,1707); only the lambda>0 branch switches to the
+manual torch softmax/entmax implementation (theirs: pipeline_sdxl.py:69-105).
 
 New here vs the Isaac-GR00T original: ``qgroup`` restricts the blend to a QUERY
 row group. The N1.7 DiT query sequence is ``[state (n_state_tokens); action (H)]``
@@ -30,6 +35,7 @@ import sys
 from typing import List, Optional
 
 import torch
+import torch.nn.functional as F
 
 try:
     from entmax import entmax15, sparsemax
@@ -128,24 +134,29 @@ class PLADISAttnProcessor:
             key = attn.norm_k(key)
 
         # --- PLADIS: dense/sparse extrapolation in place of scaled_dot_product_attention ---
-        scale_factor = 1.0 / math.sqrt(query.size(-1))
-        logits = torch.matmul(query, key.transpose(-2, -1)) * scale_factor  # (B, H, Lq, Lk)
-        # softmax/entmax in float32 for numerical stability under bf16 autocast.
-        logits = logits.float()
-        if attention_mask is not None:
-            # SDPA treats a BOOL mask as True=attend / False=-inf. Adding a bool
-            # tensor would add 0/1 instead and silently disable masking (this is
-            # what the AlternateVLDiT text/image key masks are), so convert to an
-            # additive float mask. Large-finite instead of -inf keeps entmax on
-            # the sparse branch NaN-free (matches the pi05 hook's clamp).
-            neg = torch.finfo(torch.float32).min / 4
-            if attention_mask.dtype == torch.bool:
-                attention_mask = (~attention_mask).to(torch.float32) * neg
-            logits = (logits + attention_mask.float()).clamp_min(neg)
-        dense = torch.softmax(logits, dim=-1)
         if self.pladis_scale == 0.0:
-            attn_weight = dense  # exact vanilla path (no entmax) for the parity check
+            # Official lambda=0 semantics: stay on the fused SDPA path, byte-for-byte
+            # the call AttnProcessor2_0 makes (bool mask passed through untouched).
+            # base0 == vanilla bit-exact; the hook only exercises install plumbing.
+            hidden_states = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=attention_mask, dropout_p=0.0, is_causal=False
+            )
         else:
+            scale_factor = 1.0 / math.sqrt(query.size(-1))
+            logits = torch.matmul(query, key.transpose(-2, -1)) * scale_factor  # (B, H, Lq, Lk)
+            # softmax/entmax in float32 for numerical stability under bf16 autocast.
+            logits = logits.float()
+            if attention_mask is not None:
+                # SDPA treats a BOOL mask as True=attend / False=-inf. Adding a bool
+                # tensor would add 0/1 instead and silently disable masking (this is
+                # what the AlternateVLDiT text/image key masks are), so convert to an
+                # additive float mask. Large-finite instead of -inf keeps entmax on
+                # the sparse branch NaN-free (matches the pi05 hook's clamp).
+                neg = torch.finfo(torch.float32).min / 4
+                if attention_mask.dtype == torch.bool:
+                    attention_mask = (~attention_mask).to(torch.float32) * neg
+                logits = (logits + attention_mask.float()).clamp_min(neg)
+            dense = torch.softmax(logits, dim=-1)
             sparse = self._sparse(logits)
             attn_weight = dense + self.pladis_scale * (sparse - dense)
             if self.qgroup != "all":
@@ -160,8 +171,8 @@ class PLADISAttnProcessor:
                     attn_weight = torch.cat(
                         [dense[..., :ns, :], attn_weight[..., ns:, :]], dim=-2
                     )
-        attn_weight = attn_weight.to(value.dtype)
-        hidden_states = torch.matmul(attn_weight, value)
+            attn_weight = attn_weight.to(value.dtype)
+            hidden_states = torch.matmul(attn_weight, value)
         # -------------------------------------------------------------------------------
 
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)

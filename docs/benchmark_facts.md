@@ -43,6 +43,16 @@
   torch.load 포맷. base 태스크당 1쌍(변형별 아님). 표준 평가 = pruned 50.
 - `_language`(및 light/background)는 장면 동일 → base의 pruned_init 50 그대로 적용 가능
   (dim-일치 assert 필수). `_add` 계열은 차원 불일치로 불가.
+- **layout 축(scene-altering, 2026-07-16 검증)**: init 파일 적용 금지 — `_level_sample`은
+  자유관절 물체가 base 위치로 되돌아가 교란이 조용히 무효화되고(실측: set_init_state 후 전
+  이동 물체가 base로 복귀), fixture(stove/cabinet/wine_rack 등)는 model.body_pos 소속이라
+  qpos 상태 밖 = set_init_state 통제 불능(base도 variant도 아닌 위치에 방치), `_add`는
+  dim 크래시. 대신 **reset 직전 에피소드별 `env.seed(run_seed·1_000_003 + episode)`** —
+  bddl_base_domain.seed == np.random.seed(전역)이고 robosuite placement 샘플러가 그 스트림
+  사용 → BDDL 자체 배치 샘플링이 결정론·arm-paired. 게이트(결정론 bit-일치·교란 실재·
+  크로스프로세스 일치·풀경로 eplog 패리티) = `experiments/verify_layout_axis.py` ALL PASSED.
+  layout 큐레이션 이름에는 런타임 tail(`_view_..._initstate_`)이 없음 (1,525개 전수 확인).
+  fixture 위치는 `sim.get_state()` 밖 → 결정론 검증은 반드시 body_xpos도 비교할 것.
 - 논문의 "Robot Initial States" 축은 이 파일과 무관 (위 표의 런타임 qpos 교란).
 
 ## 평가 프로토콜 참고 (paper)

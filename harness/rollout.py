@@ -20,6 +20,7 @@ Owns the model-facing data path end-to-end (docs/benchmark_facts.md):
 from __future__ import annotations
 
 import math
+import re
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -27,7 +28,25 @@ from typing import Optional
 import numpy as np
 import torch
 
-from .env import EpisodeSpec, LiberoPlusSession
+from .env import _RUNTIME_TAIL, EpisodeSpec, LiberoPlusSession
+from .video import EpisodeVideo
+
+
+def variant_marker_of(spec: EpisodeSpec) -> str:
+    """Perturbation marker of this episode, e.g. "language_29",
+    "moved_level3_sample7", "initstate_316"; unperturbed base -> "original".
+
+    Runtime-axis perturbations live in the pseudo-filename tail, not a
+    content marker: a non-zero `_initstate_<k>` (robot axis) must surface
+    here or robot-axis videos would all be labeled "original"."""
+    stripped = _RUNTIME_TAIL.sub("", spec.task_name)
+    marker = stripped[len(spec.base_task):].strip("_")
+    tail = _RUNTIME_TAIL.search(spec.task_name)
+    if tail:
+        k = int(re.search(r"_initstate_(\d+)", tail.group(0)).group(1))
+        if k:
+            marker = f"{marker}_initstate_{k}".strip("_")
+    return marker or "original"
 
 
 def quat2axisangle(quat: np.ndarray) -> np.ndarray:
@@ -88,18 +107,35 @@ class EpisodeResult:
 def run_episode(
     sess: LiberoPlusSession,
     spec: EpisodeSpec,
-    init_states: np.ndarray,
+    init_states: Optional[np.ndarray],
     model,
     episode_seed: int,
     max_steps: int = 512,
     stop_on_success: bool = True,
     exec_horizon: Optional[int] = None,
+    video_dir: Optional[str] = None,
+    video_label: str = "",
+    video_suite: str = "",
 ) -> EpisodeResult:
     """exec_horizon: execute only the first k actions of each predicted chunk
     (re-plan every k steps). The validated Isaac-GR00T LIBERO protocol uses 8
-    of 16; None executes the full chunk."""
+    of 16; None executes the full chunk.
+    video_dir: when set, record agentview+wrist (model's view) to one mp4 per
+    episode — observation consumer only, never perturbs the model/RNG path.
+    video_label: model/arm tag burned into the video header (ASCII)."""
     t0 = time.time()
     raw_obs, instruction = sess.reset(spec, init_states)
+    video = None
+    if video_dir is not None:
+        # "(suite - marker)" prefixes the DISPLAYED instruction only; the
+        # model still receives the untouched instruction string
+        marker = variant_marker_of(spec)
+        prefix = f"({video_suite} - {marker})" if video_suite else f"({marker})"
+        video = EpisodeVideo(
+            video_dir, spec.episode, spec.task_name, f"{prefix} {instruction}", video_label
+        )
+    if video is not None:
+        video.add(raw_obs)
 
     chunk_len = int(model.output_action_chunks)
     if exec_horizon is not None:
@@ -119,6 +155,8 @@ def run_episode(
         for a in actions[:chunk_len]:
             raw_obs, _, _, _ = sess.step(a.astype(np.float32))
             steps += 1
+            if video is not None:
+                video.add(raw_obs)
             if sess.check_success():
                 success_once = True
                 break
@@ -126,6 +164,9 @@ def run_episode(
                 break
         if success_once and stop_on_success:
             break
+
+    if video is not None:
+        video.close(bool(success_once))
 
     return EpisodeResult(
         episode=spec.episode,

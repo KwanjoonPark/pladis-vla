@@ -31,7 +31,8 @@ run() { # $1=tag, rest = pladis args
     echo "[sweep] === $tag / $S ($(date +%H:%M:%S)) ==="
     bash experiments/run.sh experiments/eval_arm.py \
       --suite "$S" --axis language --episodes 0 --seed 0 \
-      --model-path "$MODEL_ROOT/$S" --out "$out" "$@" \
+      --model-path "$MODEL_ROOT/$S" --out "$out" \
+      --video-dir "results/sweep/videos/n17_lang_${tag}_${S}" "$@" \
       > "results/sweep/n17_lang_${tag}_${S}.out" 2>&1
     tail -1 "results/sweep/n17_lang_${tag}_${S}.out"
   done
