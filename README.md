@@ -88,10 +88,10 @@ plus `all×all` and two baselines form the 7-arm design evaluated throughout.
 pladis/        attention hooks
   attn_gr00t.py        weight-space implementation (faithful to the official
                        PLADIS code path: eager blend at λ>0, native fused
-                       SDPA at λ=0)
-  attn_gr00t_fused.py  mathematically equivalent fused-anchored variant
-                       (SDPA + λ·(sparse−dense)@V, no λ gate); staged, see §7
-  attn_pi0.py          π0/π0.5 (Gemma joint-attention) variant
+                       SDPA at λ=0) — the hook every result here was produced with
+  attn_pi0.py          π0/π0.5 (Gemma joint-attention) variant; STAGED, not
+                       wired to any entry point in this repository and not
+                       covered by the gates of §5
 harness/       evaluation loop, fully owned
   env.py               curated schedules, per-axis delivery, deterministic
                        per-episode env seeding
@@ -108,7 +108,7 @@ experiments/   entry points
   verify_*.py          verification gates (§5)
   smoke_gr00t.py       GPU smoke test
 analysis/      analyze.py --language|--layout|--robot  (paired McNemar)
-docs/          benchmark_facts.md — cross-checked benchmark facts
+docs/          benchmark.md — cross-checked benchmark facts
 results/       (gitignored) eplogs, videos, driver logs
 ```
 
@@ -145,9 +145,16 @@ of §5 after any `diffusers`/`torch` upgrade):
 | gr00t | 0.1.0 | official Isaac-GR00T checkout, `pip install -e` |
 | liberoplus | 0.1.0 | `pip install -e ../LIBERO-plus` |
 
-**Porting note.** Two locations pin absolute paths and must be adapted:
-`experiments/run.sh` (venv interpreter `PY=...`) and the sweep drivers
-(`MODEL_ROOT=...`).
+The exact set is recorded in `requirements.txt` (reference pins, not a lock
+file — `gr00t` and `liberoplus` are editable sibling checkouts).
+
+**Porting note.** Absolute paths that must be adapted on a new machine:
+
+| location | value |
+|---|---|
+| `experiments/run.sh` | venv interpreter `PY=...`, HF token path, `MAGICK_HOME` |
+| `experiments/sweep_n17_*.sh` | `MODEL_ROOT=...` |
+| `experiments/eval_arm.py` | default `MODEL` — overridable with the `GR00T_MODEL_PATH` environment variable or `--model-path` |
 
 ### 4.4 Execution wrapper
 
@@ -181,8 +188,9 @@ machine or after dependency changes, run in order:
    silent-nullification regression, cross-process pairing),
    `verify_robot_axis.py` (wiring, delivery mechanism, determinism, level
    scaling).
-5. **Fused-anchored equivalence** (only if using `attn_gr00t_fused.py`) —
-   `verify_fused_anchor.py cpu|cuda`, see §7.
+
+Gates 3–4 need the GPU + simulator stack of §4; there is no CPU-only test
+suite. All four are expected to print `PASS` / `ALL GATES PASSED` and exit 0.
 
 ## 6. Running experiments
 
@@ -202,9 +210,17 @@ bash experiments/run.sh experiments/eval_arm.py \
 | `--episodes` | `0` = every curated variant exactly once (seed-0 schedule); `N>0` = first N |
 | `--out` | eplog TSV; doubles as the **resume ledger** — episodes already logged are skipped |
 | `--pladis-*` | hooks are installed only via explicit flags (never environment variables) |
+| `--pladis-n-state-tokens` | leading state query rows (N1.7: 1); defines the `state`/`action` split |
 
 Eplog schema (TSV): `episode, task_name, base_task, init_state_id,
 instruction, success_once, success_at_end, n_steps, wall_s`.
+
+**Resume safety.** The arm's full configuration is written alongside the
+eplog as `<out>.arm`. Resuming a run whose flags differ from that signature
+aborts rather than appending a second arm's episodes into one file — the TSV
+itself carries no arm identity, so such a mix would be invisible to
+`analyze.py`. Eplogs written before this repository added signatures resume
+with a warning.
 
 ### 6.2 Sweeps
 
@@ -232,12 +248,13 @@ python3 analysis/analyze.py --robot     # + strength-level (L1–L5) dose-respon
 ```
 
 **Statistical conventions.** Primary test: paired McNemar over the pooled
-episode pairing (`z = (n01 − n10)/√(n01+n10)`), reported per contrast with
-discordant counts. Pooled contrasts are primary; single-suite contrasts are
-interpreted conservatively (numeric-path noise alone was measured to produce
-single-suite |z| up to ≈2.7 — see §7). Multiple comparisons are
-Bonferroni-noted. Each λ=1 arm is contrasted against **both** baselines
-(vanilla and the eager-dense control).
+episode pairing (`z = (n01 − n10)/√(n01+n10)`, no continuity correction),
+over `success_once`, reported per contrast with discordant counts. Pooled
+contrasts are primary; single-suite contrasts are interpreted conservatively
+(numeric-path noise alone was measured to produce single-suite |z| up to
+≈2.7 — see §7). `analyze.py` prints a Bonferroni-adjusted p over the pooled
+contrast family and marks which contrasts survive it. Each λ=1 arm is
+contrasted against **both** baselines (vanilla and the eager-dense control).
 
 ## 7. Determinism and numerical-path conventions
 
@@ -260,16 +277,13 @@ control differs from vanilla by **−0.80 pp (McNemar z = −1.95)** pooled —
 small relative to the reported effects, and controlled for by reporting each
 arm against both baselines.
 
-`attn_gr00t_fused.py` additionally provides a **fused-anchored** form using
-the algebraic identity `(d + λ(s−d))·V = SDPA + λ·(s−d)·V`: the dense
-contribution of every arm is the same fused SDPA call, the correction term is
-always computed (no λ gate), and λ=0 is bit-identical to vanilla by an IEEE
-identity rather than by branching. `verify_fused_anchor.py` certifies
-(A) that bit-identity, (B) that query rows outside the gated group remain
-bit-identical to vanilla, and (C) equivalence to the weight-space
-implementation at the dtype rounding floor (fp32 ~2e-7, bf16 ~4e-3 relative).
-All sweep results produced with this repository so far use the weight-space
-implementation.
+A **fused-anchored** alternative is possible via the algebraic identity
+`(d + λ(s−d))·V = SDPA + λ·(s−d)·V` — the dense contribution of every arm
+would be the same fused SDPA call and the λ=0 arm bit-identical to vanilla by
+an IEEE identity rather than by branching, removing the fused↔eager term
+above. It is **not implemented in this repository**; every result here uses
+the weight-space hook and controls for the transition by reporting each arm
+against both baselines.
 
 <!-- §8 Results summary: to be added once the experimental campaign is
      complete. Tables are regenerated by analysis/analyze.py. -->

@@ -25,7 +25,10 @@ from harness.eplog import EpisodeLogger
 from harness.model_gr00t import load_gr00t_n1d7
 from harness.rollout import run_episode
 
-MODEL = "/home/reallab/parkkwanjoon/workspace/models/GR00T-N1.7-LIBERO/libero_10"
+MODEL = os.environ.get(
+    "GR00T_MODEL_PATH",
+    "/home/reallab/parkkwanjoon/workspace/models/GR00T-N1.7-LIBERO/libero_10",
+)
 
 
 def parse_args():
@@ -49,6 +52,9 @@ def parse_args():
     p.add_argument("--pladis-qgroup", default="all", choices=["all", "state", "action"])
     p.add_argument("--pladis-kind", default="all", choices=["all", "text", "image"])
     p.add_argument("--pladis-method", default="ent15max")
+    p.add_argument("--pladis-n-state-tokens", type=int, default=1,
+                   help="leading state query rows; splits the [state; action] "
+                        "sequence for --pladis-qgroup (N1.7: 1)")
     return p.parse_args()
 
 
@@ -80,6 +86,7 @@ def main():
             method=args.pladis_method,
             kind=args.pladis_kind,
             qgroup=args.pladis_qgroup,
+            n_state_tokens=args.pladis_n_state_tokens,
         )
         print(f"[arm] PLADIS installed on blocks {installed}", flush=True)
     else:
@@ -96,10 +103,31 @@ def main():
         arm_tag = f"{args.pladis_qgroup} x {args.pladis_kind} (s={args.pladis_scale:g})"
     video_label = f"{model_tag} | {arm_tag}"
 
+    # Everything that determines what an episode row means. The eplog is the
+    # resume ledger and carries no arm identity of its own, so this is what
+    # stops a re-run with different flags from appending into another arm's
+    # file (harness/eplog.py).
+    arm_signature = "|".join(
+        [
+            f"suite={args.suite}",
+            f"axis={args.axis}",
+            f"seed={args.seed}",
+            f"model={os.path.normpath(args.model_path)}",
+            f"max_steps={args.max_steps}",
+            f"exec_horizon={args.exec_horizon}",
+            "pladis=off" if not args.pladis_install else (
+                f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
+                f"q{args.pladis_qgroup},k{args.pladis_kind},"
+                f"ns{args.pladis_n_state_tokens}"
+            ),
+        ]
+    )
+    print(f"[arm] signature {arm_signature}", flush=True)
+
     ts = LiberoPlusTaskSet(args.suite, axis)
     n_eps = len(ts.task_names) if args.episodes == 0 else args.episodes
     sched = ts.schedule(n_eps, seed=args.seed)
-    log = EpisodeLogger(args.out, resume=True)
+    log = EpisodeLogger(args.out, resume=True, arm_signature=arm_signature)
     todo = [s for s in sched if s.episode not in log.done_episodes]
     print(f"[arm] {len(todo)}/{len(sched)} episodes to run -> {args.out}", flush=True)
 

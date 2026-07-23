@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """LIBERO-plus episode provider — the harness owns every input the model sees.
 
-Contract (docs/benchmark_facts.md):
+Contract (docs/benchmark.md):
   * Schedule comes from the CURATED benchmark list (task_classification.json),
     not from `ls bddl_files` — the on-disk 500/suite include pre-filter easy
     tasks the paper removed (libero_10 language: 500 on disk, 383 curated).
@@ -23,7 +23,7 @@ Contract (docs/benchmark_facts.md):
     implicit `(seed+idx) % len` scattered in env code.
   * Plain bddl paths carry no hidden runtime randomizers (env_wrapper only
     activates camera/robot/noise perturbations for `_view_..._initstate_...`
-    pseudo-filenames; see benchmark_facts.md).
+    pseudo-filenames; see benchmark.md).
 """
 
 from __future__ import annotations
@@ -228,7 +228,7 @@ class LiberoPlusSession:
             sim_dim = len(self._env.env.sim.get_state().flatten())
             assert state.shape[-1] == sim_dim, (
                 f"init state dim {state.shape[-1]} != sim dim {sim_dim} for "
-                f"{spec.task_name} — scene-altering axis? (see benchmark_facts.md)"
+                f"{spec.task_name} — scene-altering axis? (see benchmark.md)"
             )
             obs = self._env.set_init_state(state)
         for _ in range(self.SETTLE_STEPS):

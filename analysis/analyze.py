@@ -8,6 +8,11 @@ Pairing: identical seed-0 schedule across arms -> pair by (suite, episode);
 task_name equality is asserted. Test = paired McNemar, z = (n01-n10)/sqrt(disc).
 Baseline severity uses n17_orig_vanilla_* (per-base-task mean over init 0-9).
 Read-only; writes nothing.
+
+Metric: `success_once`, the protocol's primary (README S2). Rollouts stop on
+first contact with success, so success_at_end is evaluated at that same sim
+state and the two columns agree row-for-row; any disagreement is a harness
+bug and is printed as a WARN rather than silently absorbed.
 """
 import argparse, csv, math, re
 from collections import defaultdict
@@ -53,7 +58,7 @@ def load(prefix, arm):
     for s in SUITES:
         p = SWEEP / f"{prefix}_{arm}_{s}_eplog.tsv"
         for r in csv.DictReader(open(p), delimiter="\t"):
-            r["suite"], r["succ"] = s, int(r["success_at_end"])
+            r["suite"], r["succ"] = s, int(r["success_once"])
             if r["success_at_end"] != r["success_once"]:
                 print(f"WARN succ_once!=at_end {arm} {s} ep{r['episode']}")
             eps[(s, int(r["episode"]))] = r
@@ -95,7 +100,7 @@ def main():
           ({c: sum(1 for v in cats.values() if v == c) for c in cfg["cats"]}
            if cats else ""))
 
-    print(f"\n== SR (success_at_end, %) — pooled + per suite ==")
+    print(f"\n== SR (success_once, %) — pooled + per suite ==")
     print(f"  {'arm':13s}{'pooled':>8s}"
           + "".join(f"{s.replace('libero_', ''):>9s}" for s in SUITES))
     for arm in ARMS:
@@ -110,12 +115,19 @@ def main():
                           for c in cfg["cats"])
             print(f"  {arm:13s}{row}")
 
-    print("\n== paired McNemar, pooled ==")
+    # Bonferroni over the pooled contrast family reported below (README S6.3
+    # promises the correction is noted, so compute it rather than leave it to
+    # the reader): m = number of pooled contrasts tested here.
+    m = len(KEY_CONTRASTS)
+    print(f"\n== paired McNemar, pooled (Bonferroni m={m}, alpha=.05 -> "
+          f"p<{0.05 / m:.4f}) ==")
     for a, b in KEY_CONTRASTS:
         n01, n10, z, p = mcnemar(data[a], data[b], keys)
         d = sr(a, keys) - sr(b, keys)
+        mark = "*" if p < 0.05 / m else (" " if p >= 0.05 else ".")
         print(f"  {a:13s} - {b:13s} {d:+6.2f}pp  disc {n01:3d}:{n10:3d}"
-              f"  z={z:+5.2f}  p={p:.4g}")
+              f"  z={z:+5.2f}  p={p:.4g}  p_bonf={min(1.0, p * m):.4g} {mark}")
+    print("  (* survives Bonferroni; . nominal p<.05 only)")
 
     print("\n== key contrasts per suite ==")
     for a, b in [("actionxtext", "actionximage"), ("actionxtext", "base0"),
@@ -143,7 +155,7 @@ def main():
     for s in SUITES:
         p = SWEEP / f"n17_orig_vanilla_{s}_eplog.tsv"
         for r in csv.DictReader(open(p), delimiter="\t"):
-            orig[(s, r["base_task"])].append(int(r["success_at_end"]))
+            orig[(s, r["base_task"])].append(int(r["success_once"]))
     orig_sr = {bt: 100 * sum(v) / len(v) for bt, v in orig.items()}
     print(f"\n== perturbation severity: {axis} vanilla vs original vanilla ==")
     for s in SUITES:

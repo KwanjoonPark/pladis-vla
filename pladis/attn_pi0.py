@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 # PLADIS on Pi0/Pi05 (openpi PaliGemma+expert joint attention).
 #
 # Diffusion PLADIS replaces the cross-attention softmax (Q=latent, K=text) with

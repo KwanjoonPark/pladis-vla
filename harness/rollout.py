@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Sequential rollout loop: obs → policy → step, with per-episode noise pinning.
 
-Owns the model-facing data path end-to-end (docs/benchmark_facts.md):
+Owns the model-facing data path end-to-end (docs/benchmark.md):
   * Observation formatting replicates RLinf's LIBERO conventions exactly —
     both camera images rotated 180° ("to match train preprocessing",
     rlinf/envs/libero/utils.py:90), state = [eef_pos(3), axisangle(3),
