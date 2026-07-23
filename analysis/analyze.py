@@ -2,6 +2,7 @@
 
   python analysis/analyze.py --layout     # n17_layout_* (7 arms x 1,525 eps)
   python analysis/analyze.py --language   # n17_lang_*   (7 arms x 1,537 eps)
+  python analysis/analyze.py --robot      # n17_robot_*  (7 arms x 1,550 eps)
 
 Pairing: identical seed-0 schedule across arms -> pair by (suite, episode);
 task_name equality is asserted. Test = paired McNemar, z = (n01-n10)/sqrt(disc).
@@ -33,10 +34,18 @@ def layout_cat(task_name):
         return "level_sample"
     return "UNKNOWN"
 
+def robot_level(task_name):
+    """Perturbation level from the `_initstate_<k>` tail (k=1..500):
+    hundreds digit -> L1..L5 = init_qpos noise strength 0.1..0.5."""
+    k = int(re.search(r"_initstate_(\d+)", task_name).group(1))
+    return f"L{(k - 1) // 100 + 1}"
+
 AXES = {
     "layout": {"prefix": "n17_layout", "cat": layout_cat,
                "cats": ["add", "level_sample", "moved_level"]},
     "language": {"prefix": "n17_lang", "cat": None, "cats": []},
+    "robot": {"prefix": "n17_robot", "cat": robot_level,
+              "cats": ["L1", "L2", "L3", "L4", "L5"]},
 }
 
 def load(prefix, arm):
@@ -61,10 +70,10 @@ def mcnemar(a, b, keys):
 def main():
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--layout", action="store_true")
-    g.add_argument("--language", action="store_true")
+    for name in AXES:
+        g.add_argument(f"--{name}", action="store_true")
     args = ap.parse_args()
-    axis = "layout" if args.layout else "language"
+    axis = next(a for a in AXES if getattr(args, a))
     cfg = AXES[axis]
 
     data = {arm: load(cfg["prefix"], arm) for arm in ARMS}
