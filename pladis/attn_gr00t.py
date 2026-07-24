@@ -278,6 +278,45 @@ def install_pladis(
     return installed
 
 
+def install_pladis_cells(
+    model,
+    cells: str,
+    pladis_scale: float = 1.5,
+    method: str = "ent15max",
+    beta: float = 1.0,
+    n_state_tokens: int = 1,
+) -> List[int]:
+    """Install a (possibly different) qgroup per key-kind block set.
+
+    ``cells`` is a comma-separated list of ``{qgroup}x{kind}`` cells, e.g.
+    ``"actionxtext,stateximage"`` = blend action rows on text blocks AND state
+    rows on image blocks in the same pass. Kinds must be disjoint (one
+    processor per block): express {action,state} on one kind as qgroup=all.
+    """
+    parsed = []
+    for cell in cells.split(","):
+        qgroup, sep, kind = cell.strip().partition("x")
+        if not sep or qgroup not in _VALID_QGROUPS or kind not in ("all", "text", "image"):
+            raise ValueError(f"bad cell {cell!r}: expected {{qgroup}}x{{kind}}")
+        parsed.append((qgroup, kind))
+    kinds = [k for _, k in parsed]
+    if len(set(kinds)) != len(kinds) or ("all" in kinds and len(kinds) > 1):
+        raise ValueError(f"cells must target disjoint kinds, got {kinds} "
+                         "(use qgroup=all for both row groups on one kind)")
+    installed: List[int] = []
+    for qgroup, kind in parsed:
+        installed += install_pladis(
+            model,
+            pladis_scale=pladis_scale,
+            method=method,
+            beta=beta,
+            kind=kind,
+            qgroup=qgroup,
+            n_state_tokens=n_state_tokens,
+        )
+    return sorted(installed)
+
+
 def install_pladis_from_env(model) -> str:
     """Env-gated install for the RLinf rollout worker (mirrors the openpi hook).
 

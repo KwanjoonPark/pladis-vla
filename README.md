@@ -214,7 +214,7 @@ nohup bash experiments/sweep_n17_robot.sh > results/sweep/driver_robot.out 2>&1 
 
 | driver | arms × episodes | wall-clock |
 |---|---|---|
-| `sweep_n17_language.sh` | 7 × 1,537 | ~31 h |
+| `sweep_n17_language.sh` | 9 × 1,537 (7 base arms + 2 composition arms: `allxtext`, `axt-sxi`) | ~31 h + ~9 h |
 | `sweep_n17_original.sh` | 7 × 400 | ~9 h |
 | `sweep_n17_layout.sh` | 7 × 1,525 | ~31–35 h |
 | `sweep_n17_robot.sh` | 7 × 1,550 (6 λ-arms + gated eager-dense control) | ~48 h |

@@ -43,7 +43,15 @@ def robot_level(task_name):
 AXES = {
     "layout": {"prefix": "n17_layout", "cat": layout_cat,
                "cats": ["add", "level_sample", "moved_level"]},
-    "language": {"prefix": "n17_lang", "cat": None, "cats": []},
+    "language": {"prefix": "n17_lang", "cat": None, "cats": [],
+                 # 2026-07-22 composition arms (skipped until all suites exist):
+                 # allxtext = {action,state}xtext; axt-sxi = actionxtext+stateximage
+                 "extra_arms": ["allxtext", "axt-sxi"],
+                 "extra_contrasts": [
+                     ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
+                     ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
+                     ("axt-sxi", "stateximage"),
+                 ]},
     "robot": {"prefix": "n17_robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"]},
 }
@@ -76,9 +84,16 @@ def main():
     axis = next(a for a in AXES if getattr(args, a))
     cfg = AXES[axis]
 
-    data = {arm: load(cfg["prefix"], arm) for arm in ARMS}
+    arms = list(ARMS)
+    for a in cfg.get("extra_arms", []):
+        if all((SWEEP / f"{cfg['prefix']}_{a}_{s}_eplog.tsv").exists() for s in SUITES):
+            arms.append(a)
+        else:
+            print(f"[note] extra arm {a!r}: eplogs missing/incomplete, skipped")
+
+    data = {arm: load(cfg["prefix"], arm) for arm in arms}
     keys = sorted(data["vanilla"].keys())
-    for arm in ARMS:  # schedule identity across arms
+    for arm in arms:  # schedule identity across arms
         assert set(data[arm].keys()) == set(keys), f"episode-set mismatch: {arm}"
         for k in keys:
             assert data[arm][k]["task_name"] == data["vanilla"][k]["task_name"], (arm, k)
@@ -98,20 +113,23 @@ def main():
     print(f"\n== SR (success_at_end, %) — pooled + per suite ==")
     print(f"  {'arm':13s}{'pooled':>8s}"
           + "".join(f"{s.replace('libero_', ''):>9s}" for s in SUITES))
-    for arm in ARMS:
+    for arm in arms:
         row = "".join(f"{sr(arm, per_suite[s]):9.1f}" for s in SUITES)
         print(f"  {arm:13s}{sr(arm, keys):8.2f}{row}")
 
     if cats:
         print(f"\n== per-category SR ==")
         print(f"  {'arm':13s}" + "".join(f"{c:>13s}" for c in cfg["cats"]))
-        for arm in ARMS:
+        for arm in arms:
             row = "".join(f"{sr(arm, [k for k in keys if cats[k]==c]):13.1f}"
                           for c in cfg["cats"])
             print(f"  {arm:13s}{row}")
 
     print("\n== paired McNemar, pooled ==")
-    for a, b in KEY_CONTRASTS:
+    contrasts = KEY_CONTRASTS + [
+        c for c in cfg.get("extra_contrasts", []) if c[0] in arms and c[1] in arms
+    ]
+    for a, b in contrasts:
         n01, n10, z, p = mcnemar(data[a], data[b], keys)
         d = sr(a, keys) - sr(b, keys)
         print(f"  {a:13s} - {b:13s} {d:+6.2f}pp  disc {n01:3d}:{n10:3d}"

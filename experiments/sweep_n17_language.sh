@@ -46,4 +46,10 @@ run statextext   --pladis-install --pladis-scale 1.0 --pladis-qgroup state  --pl
 run stateximage  --pladis-install --pladis-scale 1.0 --pladis-qgroup state  --pladis-kind image
 run allxall      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pladis-kind all
 
+# 2026-07-22 composition arms (resume-safe: completed arms above are skipped).
+#   allxtext = {action,state}xtext — qgroup=all on the text cross-blocks
+#   axt-sxi  = actionxtext + stateximage — per-kind qgroups in one pass
+run allxtext --pladis-install --pladis-scale 1.0 --pladis-qgroup all --pladis-kind text
+run axt-sxi  --pladis-install --pladis-scale 1.0 --pladis-cells actionxtext,stateximage
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

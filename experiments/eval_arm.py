@@ -48,6 +48,9 @@ def parse_args():
     p.add_argument("--pladis-scale", type=float, default=0.0)
     p.add_argument("--pladis-qgroup", default="all", choices=["all", "state", "action"])
     p.add_argument("--pladis-kind", default="all", choices=["all", "text", "image"])
+    p.add_argument("--pladis-cells", default=None,
+                   help="comma-separated {qgroup}x{kind} cells with per-kind qgroups "
+                        "(e.g. actionxtext,stateximage); overrides qgroup/kind")
     p.add_argument("--pladis-method", default="ent15max")
     return p.parse_args()
 
@@ -72,15 +75,25 @@ def main():
 
     model = load_gr00t_n1d7(args.model_path)
     if args.pladis_install:
-        from pladis.attn_gr00t import install_pladis
+        if args.pladis_cells:
+            from pladis.attn_gr00t import install_pladis_cells
 
-        installed = install_pladis(
-            model,
-            pladis_scale=args.pladis_scale,
-            method=args.pladis_method,
-            kind=args.pladis_kind,
-            qgroup=args.pladis_qgroup,
-        )
+            installed = install_pladis_cells(
+                model,
+                args.pladis_cells,
+                pladis_scale=args.pladis_scale,
+                method=args.pladis_method,
+            )
+        else:
+            from pladis.attn_gr00t import install_pladis
+
+            installed = install_pladis(
+                model,
+                pladis_scale=args.pladis_scale,
+                method=args.pladis_method,
+                kind=args.pladis_kind,
+                qgroup=args.pladis_qgroup,
+            )
         print(f"[arm] PLADIS installed on blocks {installed}", flush=True)
     else:
         print("[arm] vanilla (no hook)", flush=True)
@@ -92,6 +105,8 @@ def main():
         arm_tag = "vanilla"
     elif args.pladis_scale == 0:
         arm_tag = "base0 (hook s=0)"
+    elif args.pladis_cells:
+        arm_tag = f"{args.pladis_cells} (s={args.pladis_scale:g})"
     else:
         arm_tag = f"{args.pladis_qgroup} x {args.pladis_kind} (s={args.pladis_scale:g})"
     video_label = f"{model_tag} | {arm_tag}"
