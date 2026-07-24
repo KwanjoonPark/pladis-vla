@@ -7,7 +7,12 @@ Because the eplog IS the resume ledger, resuming into a file written by a
 DIFFERENT arm would silently produce one file holding two arms' episodes —
 undetectable downstream, since the TSV carries no arm identity. The arm
 signature is therefore stored in a `<path>.arm` sidecar (not in the TSV, so
-the schema every consumer parses is unchanged) and checked on resume."""
+the schema every consumer parses is unchanged) and checked on resume.
+
+Sidecar format: line 1 = the arm signature (the identity that is checked);
+optional further lines = provenance records ("code <git-describe>" per run),
+appended so a multi-server campaign can attribute every eplog to the commit
+that produced it. Only line 1 participates in the resume check."""
 
 from __future__ import annotations
 
@@ -20,12 +25,14 @@ COLUMNS = [f.name for f in fields(EpisodeResult)]
 
 
 class EpisodeLogger:
-    def __init__(self, path: str, resume: bool = True, arm_signature: str | None = None):
+    def __init__(self, path: str, resume: bool = True, arm_signature: str | None = None,
+                 provenance: str | None = None):
         self.path = path
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         self.done_episodes: set[int] = set()
         self._sig_path = path + ".arm"
-        if resume and os.path.exists(path):
+        resuming = resume and os.path.exists(path)
+        if resuming:
             self._check_arm(arm_signature)
             with open(path) as f:
                 header = f.readline().rstrip("\n").split("\t")
@@ -45,8 +52,12 @@ class EpisodeLogger:
             self._fh.write("\t".join(COLUMNS) + "\n")
             self._fh.flush()
         if arm_signature is not None:
-            with open(self._sig_path, "w") as f:
-                f.write(arm_signature + "\n")
+            keep_history = resuming and os.path.exists(self._sig_path)
+            with open(self._sig_path, "a" if keep_history else "w") as f:
+                if not keep_history:
+                    f.write(arm_signature + "\n")
+                if provenance is not None:
+                    f.write(f"code {provenance}\n")
 
     def _check_arm(self, arm_signature: str | None) -> None:
         """Refuse to append this arm's episodes to another arm's ledger."""
@@ -60,7 +71,7 @@ class EpisodeLogger:
             )
             return
         with open(self._sig_path) as f:
-            prev = f.read().strip()
+            prev = f.readline().strip()
         if prev != arm_signature:
             raise SystemExit(
                 f"[eplog] REFUSING to resume {self.path}: it was written by arm "

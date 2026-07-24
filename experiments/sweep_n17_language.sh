@@ -7,7 +7,9 @@
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 mkdir -p results/sweep
-MODEL_ROOT=/home/reallab/parkkwanjoon/workspace/models/GR00T-N1.7-LIBERO
+. experiments/load_machine_env.sh
+MODEL_ROOT="$MODEL_ROOT_GR00T_N17"
+pladis_require_clean_tree
 # libero_10 first: its checkpoint is already local, buying download time
 SUITES="libero_10 libero_goal libero_object libero_spatial"
 
@@ -51,5 +53,23 @@ run allxall      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pl
 #   axt-sxi  = actionxtext + stateximage — per-kind qgroups in one pass
 run allxtext --pladis-install --pladis-scale 1.0 --pladis-qgroup all --pladis-kind text
 run axt-sxi  --pladis-install --pladis-scale 1.0 --pladis-cells actionxtext,stateximage
+
+# 2026-07-23 lambda=1.5 arms (the official PLADIS recommended regime): the
+# three text-locus arms plus the remaining three base cells, so lambda=1.5
+# forms a complete dose row over every locus studied at lambda=1.
+run actionxtext15 --pladis-install --pladis-scale 1.5 --pladis-qgroup action --pladis-kind text
+run allxtext15    --pladis-install --pladis-scale 1.5 --pladis-qgroup all    --pladis-kind text
+run axt-sxi15     --pladis-install --pladis-scale 1.5 --pladis-cells actionxtext,stateximage
+run actionximage15 --pladis-install --pladis-scale 1.5 --pladis-qgroup action --pladis-kind image
+run stateximage15  --pladis-install --pladis-scale 1.5 --pladis-qgroup state  --pladis-kind image
+run statextext15   --pladis-install --pladis-scale 1.5 --pladis-qgroup state  --pladis-kind text
+
+# 2026-07-23 temperature-softmax control (paper supplement G.1): sparse branch
+# = softmax(beta*l) i.e. tau = 1/beta, at lambda=1 on the action-x-text locus.
+# Strength-matched "are entmax's exact zeros special?" test vs ent15max
+# (RoboCasa calibration: beta~2 matches ent15 sharpening strength).
+run axt-temp15 --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 1.5 --pladis-qgroup action --pladis-kind text
+run axt-temp20 --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup action --pladis-kind text
+run axt-temp30 --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 3.0 --pladis-qgroup action --pladis-kind text
 
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

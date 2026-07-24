@@ -1,0 +1,9 @@
+# Pinned external checkouts — the exact versions this repo's results were
+# produced against. Format (tab-separated, one per line):
+#   name<TAB>dest (shell vars expanded after load_machine_env)<TAB>git URL<TAB>commit SHA
+# scripts/clone_externals.sh clones/checks-out these; experiments/verify_externals.py
+# gates on them. Untracked files inside the checkouts (asset downloads, .magick,
+# egg-info, venv dirs) are expected; TRACKED modifications are not.
+libero-plus	$WS/LIBERO-plus	https://github.com/RLinf/LIBERO-plus.git	ce59d7eb5b5d5ac20b922f4c11769b0da870113d
+rlinf	$WS/RLinf	https://github.com/RLinf/RLinf.git	d0a97caae5694d58fa7362b1544dd19fb379f470
+gr00t	$PLADIS_VENV_GR00T/gr00t	https://github.com/NVIDIA/Isaac-GR00T.git	23ace64f17aa5015259b8609d371eb61a357c776

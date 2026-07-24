@@ -65,6 +65,22 @@ def parse_args():
     return p.parse_args()
 
 
+def _git_describe() -> str:
+    """Commit that produced this run (+ -dirty marker), for the .arm sidecar —
+    multi-server campaigns must be attributable to exact code versions."""
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["git", "describe", "--always", "--dirty"],
+            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        return out or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _model_tag(model_path: str) -> str:
     """Human-readable VLA name from the checkpoint path.
     .../GR00T-N1.7-LIBERO/libero_10 (HF repo nvidia/GR00T-N1.7-LIBERO, one
@@ -106,11 +122,14 @@ def main():
         ]
     )
     print(f"[arm] signature {arm_signature}", flush=True)
+    code_version = _git_describe()
+    print(f"[arm] code {code_version}", flush=True)
 
     ts = LiberoPlusTaskSet(args.suite, axis)
     n_eps = len(ts.task_names) if args.episodes == 0 else args.episodes
     sched = ts.schedule(n_eps, seed=args.seed)
-    log = EpisodeLogger(args.out, resume=True, arm_signature=arm_signature)
+    log = EpisodeLogger(args.out, resume=True, arm_signature=arm_signature,
+                        provenance=code_version)
     todo = [s for s in sched if s.episode not in log.done_episodes]
     print(f"[arm] {len(todo)}/{len(sched)} episodes to run -> {args.out}", flush=True)
     if not todo:

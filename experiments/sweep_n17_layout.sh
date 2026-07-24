@@ -10,7 +10,9 @@
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 mkdir -p results/sweep
-MODEL_ROOT=/home/reallab/parkkwanjoon/workspace/models/GR00T-N1.7-LIBERO
+. experiments/load_machine_env.sh
+MODEL_ROOT="$MODEL_ROOT_GR00T_N17"
+pladis_require_clean_tree
 SUITES="libero_10 libero_goal libero_object libero_spatial"
 ORIG_PID="${1:-1260591}"  # sweep_n17_original.sh driver to wait on
 

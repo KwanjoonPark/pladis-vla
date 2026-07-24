@@ -9,3 +9,4 @@ results/
 *.mp4
 *.log
 *.out
+experiments/machine.env

@@ -49,13 +49,36 @@ AXES = {
     "layout": {"prefix": "n17_layout", "cat": layout_cat,
                "cats": ["add", "level_sample", "moved_level"]},
     "language": {"prefix": "n17_lang", "cat": None, "cats": [],
-                 # 2026-07-22 composition arms (skipped until all suites exist):
-                 # allxtext = {action,state}xtext; axt-sxi = actionxtext+stateximage
-                 "extra_arms": ["allxtext", "axt-sxi"],
+                 # extra arms are skipped until all four suite eplogs exist.
+                 # 07-22 composition arms: allxtext = {action,state}xtext;
+                 #   axt-sxi = actionxtext+stateximage.
+                 # 07-23 lambda=1.5 row (official recommended regime) over the
+                 #   text-locus arms AND the remaining base cells:
+                 #   {actionxtext,allxtext,axt-sxi,actionximage,stateximage,statextext}15.
+                 # 07-23 temperature control (softmax(beta*l), tau=1/beta) at
+                 #   lambda=1 on a-x-t: axt-temp{15,20,30}.
+                 "extra_arms": ["allxtext", "axt-sxi",
+                                "actionxtext15", "allxtext15", "axt-sxi15",
+                                "actionximage15", "stateximage15", "statextext15",
+                                "axt-temp15", "axt-temp20", "axt-temp30"],
                  "extra_contrasts": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
                      ("axt-sxi", "stateximage"),
+                     # dose-response: each lambda=1.5 arm vs vanilla and vs
+                     # its lambda=1 counterpart, plus the locus contrast at 1.5
+                     ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
+                     ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
+                     ("axt-sxi15", "vanilla"), ("axt-sxi15", "axt-sxi"),
+                     ("actionximage15", "vanilla"), ("actionximage15", "actionximage"),
+                     ("stateximage15", "vanilla"), ("stateximage15", "stateximage"),
+                     ("statextext15", "vanilla"), ("statextext15", "statextext"),
+                     ("actionxtext15", "actionximage15"),
+                     # temperature vs entmax at the same locus: the paper's
+                     # "exact zeros are necessary" claim, tested head-to-head
+                     ("axt-temp15", "vanilla"), ("axt-temp15", "actionxtext"),
+                     ("axt-temp20", "vanilla"), ("axt-temp20", "actionxtext"),
+                     ("axt-temp30", "vanilla"), ("axt-temp30", "actionxtext"),
                  ]},
     "robot": {"prefix": "n17_robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"]},

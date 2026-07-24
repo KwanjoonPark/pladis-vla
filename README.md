@@ -11,6 +11,13 @@ The codebase is a self-contained evaluation harness: scheduling, perturbation
 delivery, seeding, rollout, and logging are all owned by this repository, and
 every delivery/parity claim is backed by an executable verification gate.
 
+**Design space.** Interventions are evaluated over a grid of models × axes:
+models {GR00T N1.7 (implemented); π0 / π0.5 (openpi track, in progress);
+SmolVLA and GR00T N1.5 (planned)} × perturbation axes {language, layout,
+robot, original}. Campaigns are distributed across machines at
+(model × axis) granularity — all arms of one comparison share one machine
+and stack (docs/SETUP.md §0).
+
 ---
 
 ## 1. Method
@@ -102,13 +109,17 @@ harness/       evaluation loop, fully owned
                        arm-signature guarded)
   video.py             per-episode mp4 of the model's two camera views
 experiments/   entry points
-  run.sh               environment wrapper (all commands go through it)
+  run.sh               environment wrapper (all commands go through it);
+                       --venv selects the model track's interpreter
+  load_machine_env.sh  machine config loader (defaults + machine.env override)
+  machine.env.example  per-machine config template (copy to machine.env)
   eval_arm.py          single-arm evaluator — anchors, parity checks, and
                        sweeps share this one code path
   sweep_n17_*.sh       sweep drivers (language / original / layout / robot);
                        the arm list of each axis lives in the script itself
   verify_*.py          verification gates (§5)
   smoke_gr00t.py       GPU smoke test
+scripts/       externals.lock (pinned sibling-checkout SHAs) + clone_externals.sh
 analysis/      analyze.py --language|--layout|--robot  (paired McNemar)
 docs/          benchmark.md — cross-checked benchmark facts
 results/       (gitignored) eplogs, videos, driver logs
@@ -116,56 +127,26 @@ results/       (gitignored) eplogs, videos, driver logs
 
 ## 4. Installation
 
-### 4.1 Requirements
+- 1× CUDA GPU (bf16); ~13–17 s/episode. ~30 GB for checkpoints; ~5–10 GB per
+  sweep if video recording is enabled.
+- Machine setup is fully described in **`docs/SETUP.md`**: external checkouts
+  pinned by SHA (`scripts/externals.lock` + `scripts/clone_externals.sh`),
+  per-track venv recipes and version pins (`requirements.txt` holds the
+  reference set), checkpoint downloads, and the per-machine config file
+  (`experiments/machine.env`, gitignored — copy from `machine.env.example`).
+- The attention hooks are line-for-line ports against pinned library
+  versions (diffusers 0.35.1 for GR00T; transformers 4.53.2 for the openpi
+  track) — re-run the parity gates of §5 after any upgrade.
 
-- 1× CUDA GPU (developed on a single H100, bf16); ~13–17 s/episode
-- ~30 GB for checkpoints; ~5–10 GB per sweep if video recording is enabled
+### 4.1 Execution wrapper
 
-### 4.2 External checkouts (sibling directories)
-
-| path | content |
-|---|---|
-| `../LIBERO-plus` | benchmark checkout (bddl/init files, curated `task_classification.json`, bundled ImageMagick under `.magick`); `pip install -e` into the venv |
-| `../models/GR00T-N1.7-LIBERO/` | `huggingface-cli download nvidia/GR00T-N1.7-LIBERO --local-dir ../models/GR00T-N1.7-LIBERO` |
-| `~/.cache/huggingface` | Cosmos-Reason2-2B backbone (auto-downloaded on first load) |
-| `~/.hf_user_token` | plain-text HF token, read at runtime by `run.sh` |
-
-### 4.3 Python environment
-
-Python 3.11 (uv-managed). Pinned versions (validated; the attention hook is a
-line-for-line port of `diffusers` `AttnProcessor2_0` — re-run the parity gates
-of §5 after any `diffusers`/`torch` upgrade):
-
-| package | version | note |
-|---|---|---|
-| torch / torchvision | 2.6.0 / 0.21.0 | flash-attn 2.7.4.post1 |
-| diffusers | 0.35.1 | attention processor base |
-| entmax | 1.3 | sparse branch |
-| robosuite | 1.4.1 | pip install (not editable) |
-| mujoco | 3.6.0 | EGL rendering |
-| transformers | 4.57.3 | numpy 2.4.6 |
-| gr00t | 0.1.0 | official Isaac-GR00T checkout, `pip install -e` |
-| liberoplus | 0.1.0 | `pip install -e ../LIBERO-plus` |
-
-The exact set is recorded in `requirements.txt` (reference pins, not a lock
-file — `gr00t` and `liberoplus` are editable sibling checkouts).
-
-**Porting note.** Absolute paths that must be adapted on a new machine:
-
-| location | value |
-|---|---|
-| `experiments/run.sh` | venv interpreter `PY=...`, HF token path, `MAGICK_HOME` |
-| `experiments/sweep_n17_*.sh` | `MODEL_ROOT=...` |
-| `experiments/eval_arm.py` | default `MODEL` — overridable with the `GR00T_MODEL_PATH` environment variable or `--model-path` |
-
-### 4.4 Execution wrapper
-
-Every Python entry point is invoked through `experiments/run.sh`, which sets
-EGL rendering, the ImageMagick library path, `PYTHONPATH`, the HF token, and
-the pinned interpreter:
+Every Python entry point is invoked through `experiments/run.sh`, which
+selects the model track's venv, and sets EGL rendering, the ImageMagick
+library path, `PYTHONPATH`, and the HF token:
 
 ```bash
-bash experiments/run.sh experiments/smoke_gr00t.py    # model + env smoke test
+bash experiments/run.sh experiments/smoke_gr00t.py                 # default venv: gr00t
+bash experiments/run.sh --venv openpi experiments/verify_externals.py
 ```
 
 Bypassing the wrapper (inline env prefixes, direct `python`) is unsupported.
@@ -175,6 +156,9 @@ Bypassing the wrapper (inline env prefixes, direct `python`) is unsupported.
 The harness treats delivery and parity claims as testable artifacts. On a new
 machine or after dependency changes, run in order:
 
+0. **Externals** — `verify_externals.py`: sibling checkouts match
+   `scripts/externals.lock` and the active venv matches the critical version
+   pins.
 1. **Anchor** — unperturbed LIBERO-10 reproduces the published model-card
    success rate within sampling error: `eval_arm.py --axis none --episodes 100`.
 2. **Instruction delivery** — `smoke_gr00t.py` asserts a language-variant
@@ -237,9 +221,11 @@ nohup bash experiments/sweep_n17_<axis>.sh > results/sweep/driver_<axis>.out 2>&
 
 One driver per axis (`language` / `original` / `layout` / `robot`). Each
 driver enumerates its arm list explicitly — the script is the source of truth
-for which arms an axis carries. All drivers are resume-safe at episode
-granularity, so re-running a driver skips completed arms and executes only
-what is new. Outputs follow
+for which arms an axis carries. Drivers refuse to start from a dirty working
+tree (results must be attributable to a commit; each run appends
+`code <git-describe>` to the eplog's `.arm` sidecar). All drivers are
+resume-safe at episode granularity, so re-running a driver skips completed
+arms and executes only what is new. Outputs follow
 `results/sweep/n17_{axis}_{arm}_{suite}_eplog.tsv` (+ a same-named `.out` log
 and, when enabled, `videos/n17_{axis}_{arm}_{suite}/ep#####_{S|F}_{task}.mp4`).
 
