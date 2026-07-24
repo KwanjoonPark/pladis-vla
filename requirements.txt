@@ -1,0 +1,26 @@
+# Reference pins for the validated environment (README §4.3), Python 3.11.
+# NOT a lock file: `gr00t` and `liberoplus` are editable sibling checkouts and
+# torch/flash-attn must match the local CUDA build.
+#
+# The attention hook is a line-for-line port of diffusers' AttnProcessor2_0 —
+# re-run the verification gates of README §5 after any diffusers/torch change.
+
+torch==2.6.0
+torchvision==0.21.0
+flash-attn==2.7.4.post1
+diffusers==0.35.1
+transformers==4.57.3
+entmax==1.3
+numpy==2.4.6
+
+# simulator / benchmark
+robosuite==1.4.1        # pip install, NOT editable
+mujoco==3.6.0           # EGL rendering
+
+# video recording (harness/video.py)
+opencv-python
+imageio[ffmpeg]
+
+# installed from sibling checkouts, not PyPI:
+#   pip install -e ../Isaac-GR00T     # gr00t==0.1.0
+#   pip install -e ../LIBERO-plus     # liberoplus==0.1.0

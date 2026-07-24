@@ -36,7 +36,6 @@ blocks via install_pladis.
 from __future__ import annotations
 
 import math
-import os
 import sys
 from typing import List, Optional
 
@@ -162,6 +161,18 @@ class PLADISAttnProcessor:
             logits = (logits + add_mask.float()).clamp_min(neg)
         dense = torch.softmax(logits, dim=-1)
         delta = self._sparse(logits) - dense
+        if self.qgroup != "all":
+            # A wrong n_state_tokens mis-slices the two groups SILENTLY (row
+            # zeroing accepts any split), so the whole state/action contrast
+            # would be meaningless. Check the split is non-degenerate against
+            # the live query length instead.
+            n_query = delta.shape[-2]
+            if not 0 < self.n_state_tokens < n_query:
+                raise ValueError(
+                    f"n_state_tokens={self.n_state_tokens} does not split a "
+                    f"{n_query}-row query sequence into non-empty [state; action] "
+                    f"groups — the qgroup={self.qgroup!r} arm would be degenerate."
+                )
         if self.qgroup == "state":
             # Query rows are [state(0:n_state_tokens); action(n_state_tokens:)].
             # Rows outside the group get a zero correction -> bit-identical to vanilla.
@@ -217,16 +228,25 @@ def cross_block_indices(dit, kind: str = "text") -> List[int]:
     when ``idx % (2 * attend_text_every_n_blocks) == 0``, else to image.
     """
     n = len(dit.transformer_blocks)
-    every = getattr(dit, "attend_text_every_n_blocks", None) or 1
     even = [i for i in range(n) if i % 2 == 0]
     if kind == "all":
         return even
+    if kind not in ("text", "image"):
+        raise ValueError(f"kind must be all|text|image, got {kind}")
+    # NOT a soft default: with every==1 the rule collapses (every even block is
+    # a text block) and kind="image" would silently select ZERO blocks — the
+    # arm would then run as plain vanilla while being logged as an intervention.
+    every = getattr(dit, "attend_text_every_n_blocks", None)
+    if not every or every < 2:
+        raise ValueError(
+            f"attend_text_every_n_blocks={every!r} gives no text/image alternation "
+            f"on this DiT, so kind={kind!r} is not a well-defined key group. "
+            f"Use kind='all' or pass explicit `blocks=`."
+        )
     text = [i for i in even if i % (2 * every) == 0]
     if kind == "text":
         return text
-    if kind == "image":
-        return [i for i in even if i not in set(text)]
-    raise ValueError(f"kind must be all|text|image, got {kind}")
+    return [i for i in even if i not in set(text)]
 
 
 def install_pladis(
@@ -262,6 +282,16 @@ def install_pladis(
                 )
             )
             installed.append(idx)
+
+    # An empty install is indistinguishable from vanilla at rollout time: the
+    # arm would consume a full sweep and be reported as an intervention while
+    # having changed nothing. Never let it start.
+    if not installed:
+        raise RuntimeError(
+            f"PLADIS install selected no blocks (kind={kind!r}, blocks={blocks!r}, "
+            f"n_layers={len(dit.transformer_blocks)}) — this arm would be "
+            f"bit-identical to vanilla."
+        )
 
     msg = (
         f"[PLADIS] installed on blocks {installed} "
@@ -311,33 +341,3 @@ def install_pladis_cells(
             n_state_tokens=n_state_tokens,
         )
     return sorted(installed)
-
-
-def install_pladis_from_env(model) -> str:
-    """Env-gated install for the RLinf rollout worker (mirrors the openpi hook).
-
-    Env vars:
-      PLADIS_ENABLE=1        master switch (else no-op)
-      PLADIS_SCALE=1.5       lambda blend; 0 = exact-vanilla parity check
-      PLADIS_METHOD=ent15max ent15max|sparsemax|softmax
-      PLADIS_BETA=1.0        sparse-branch temperature
-      PLADIS_KIND=text       text|image|all  (key group via block selection)
-      PLADIS_QGROUP=all      all|state|action (query row group)
-      PLADIS_BLOCKS=8,12     explicit block indices (overrides KIND)
-      PLADIS_NSTATE=1        number of leading state query tokens
-    """
-    if os.environ.get("PLADIS_ENABLE", "").lower() not in ("1", "true", "yes"):
-        return "[PLADIS-gr00t] disabled (PLADIS_ENABLE unset)"
-    blocks_env = os.environ.get("PLADIS_BLOCKS", "").strip()
-    blocks = [int(x) for x in blocks_env.split(",") if x.strip()] if blocks_env else None
-    installed = install_pladis(
-        model,
-        pladis_scale=float(os.environ.get("PLADIS_SCALE", "1.5")),
-        method=os.environ.get("PLADIS_METHOD", "ent15max"),
-        beta=float(os.environ.get("PLADIS_BETA", "1.0")),
-        blocks=blocks,
-        kind=os.environ.get("PLADIS_KIND", "text"),
-        qgroup=os.environ.get("PLADIS_QGROUP", "all"),
-        n_state_tokens=int(os.environ.get("PLADIS_NSTATE", "1")),
-    )
-    return f"[PLADIS-gr00t] active on blocks {installed}"
