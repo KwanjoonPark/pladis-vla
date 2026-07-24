@@ -55,6 +55,10 @@ def parse_args():
                    help="comma-separated {qgroup}x{kind} cells with per-kind qgroups "
                         "(e.g. actionxtext,stateximage); overrides qgroup/kind")
     p.add_argument("--pladis-method", default="ent15max")
+    p.add_argument("--pladis-beta", type=float, default=1.0,
+                   help="sparse-branch inverse temperature: sparse = method(beta*logits). "
+                        "With --pladis-method softmax and beta>1 this is the paper's "
+                        "S G.1 temperature-sharpened softmax control (tau = 1/beta)")
     p.add_argument("--pladis-n-state-tokens", type=int, default=1,
                    help="leading state query rows; splits the [state; action] "
                         "sequence for --pladis-qgroup (N1.7: 1)")
@@ -79,6 +83,43 @@ def main():
     args = parse_args()
     axis = None if args.axis == "none" else args.axis
 
+    # Everything that determines what an episode row means. The eplog is the
+    # resume ledger and carries no arm identity of its own, so this is what
+    # stops a re-run with different flags from appending into another arm's
+    # file (harness/eplog.py).
+    arm_signature = "|".join(
+        [
+            f"suite={args.suite}",
+            f"axis={args.axis}",
+            f"seed={args.seed}",
+            f"model={os.path.normpath(args.model_path)}",
+            f"max_steps={args.max_steps}",
+            f"exec_horizon={args.exec_horizon}",
+            "pladis=off" if not args.pladis_install else (
+                f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
+                f"b{args.pladis_beta:g},"
+                + (f"cells[{args.pladis_cells}],"
+                   if args.pladis_cells
+                   else f"q{args.pladis_qgroup},k{args.pladis_kind},")
+                + f"ns{args.pladis_n_state_tokens}"
+            ),
+        ]
+    )
+    print(f"[arm] signature {arm_signature}", flush=True)
+
+    ts = LiberoPlusTaskSet(args.suite, axis)
+    n_eps = len(ts.task_names) if args.episodes == 0 else args.episodes
+    sched = ts.schedule(n_eps, seed=args.seed)
+    log = EpisodeLogger(args.out, resume=True, arm_signature=arm_signature)
+    todo = [s for s in sched if s.episode not in log.done_episodes]
+    print(f"[arm] {len(todo)}/{len(sched)} episodes to run -> {args.out}", flush=True)
+    if not todo:
+        # resume no-op: exit before the model load — sweep drivers re-invoke
+        # every arm on every run, and completed arms should cost seconds.
+        log.close()
+        print(f"[arm] DONE 0 eps (resume: all {len(sched)} already logged)", flush=True)
+        return
+
     model = load_gr00t_n1d7(args.model_path)
     if args.pladis_install:
         if args.pladis_cells:
@@ -89,6 +130,7 @@ def main():
                 args.pladis_cells,
                 pladis_scale=args.pladis_scale,
                 method=args.pladis_method,
+                beta=args.pladis_beta,
                 n_state_tokens=args.pladis_n_state_tokens,
             )
         else:
@@ -98,6 +140,7 @@ def main():
                 model,
                 pladis_scale=args.pladis_scale,
                 method=args.pladis_method,
+                beta=args.pladis_beta,
                 kind=args.pladis_kind,
                 qgroup=args.pladis_qgroup,
                 n_state_tokens=args.pladis_n_state_tokens,
@@ -118,36 +161,6 @@ def main():
     else:
         arm_tag = f"{args.pladis_qgroup} x {args.pladis_kind} (s={args.pladis_scale:g})"
     video_label = f"{model_tag} | {arm_tag}"
-
-    # Everything that determines what an episode row means. The eplog is the
-    # resume ledger and carries no arm identity of its own, so this is what
-    # stops a re-run with different flags from appending into another arm's
-    # file (harness/eplog.py).
-    arm_signature = "|".join(
-        [
-            f"suite={args.suite}",
-            f"axis={args.axis}",
-            f"seed={args.seed}",
-            f"model={os.path.normpath(args.model_path)}",
-            f"max_steps={args.max_steps}",
-            f"exec_horizon={args.exec_horizon}",
-            "pladis=off" if not args.pladis_install else (
-                f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
-                + (f"cells[{args.pladis_cells}],"
-                   if args.pladis_cells
-                   else f"q{args.pladis_qgroup},k{args.pladis_kind},")
-                + f"ns{args.pladis_n_state_tokens}"
-            ),
-        ]
-    )
-    print(f"[arm] signature {arm_signature}", flush=True)
-
-    ts = LiberoPlusTaskSet(args.suite, axis)
-    n_eps = len(ts.task_names) if args.episodes == 0 else args.episodes
-    sched = ts.schedule(n_eps, seed=args.seed)
-    log = EpisodeLogger(args.out, resume=True, arm_signature=arm_signature)
-    todo = [s for s in sched if s.episode not in log.done_episodes]
-    print(f"[arm] {len(todo)}/{len(sched)} episodes to run -> {args.out}", flush=True)
 
     sess = LiberoPlusSession(seed=args.seed)
     t0, n_succ, n_run = time.time(), 0, 0
