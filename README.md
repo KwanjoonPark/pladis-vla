@@ -4,14 +4,12 @@
 This repository applies PLADIS-style sparse cross-attention interventions to
 the action-head DiT of a vision-language-action model (GR00T N1.7), factorized
 over **query groups (state / action tokens) × key modalities (text / image)**,
-and measures the effect of each intervention *locus* on the LIBERO-plus
-robustness benchmark with paired, episode-level statistics.
+and evaluates each intervention *locus* on the LIBERO-plus robustness
+benchmark with paired, episode-level statistics.
 
 The codebase is a self-contained evaluation harness: scheduling, perturbation
 delivery, seeding, rollout, and logging are all owned by this repository, and
 every delivery/parity claim is backed by an executable verification gate.
-
-<!-- Figure 1 (method overview: DiT block layout + qgroup×kind grid) goes here. -->
 
 ---
 
@@ -24,12 +22,14 @@ training-free, inference-time intervention that replaces the cross-attention
 map with a dense/sparse extrapolation:
 
 ```
-attn = dense + λ · (sparse − dense),   dense = softmax(z),  sparse = entmax15(z)
+attn = dense + λ · (sparse − dense),   dense = softmax(z),  sparse = f(β · z)
 ```
 
-`λ = 0` recovers the vanilla model; `λ = 1` is a pure entmax-1.5 substitution.
-This study fixes `λ = 1` and varies **where** the blend is applied, rather
-than how strongly.
+`λ = 0` recovers the vanilla model; `λ = 1` substitutes the sparse map.
+The sparse transform `f` (`entmax15` / `sparsemax` / `softmax`), the blend
+strength `λ`, and the sparse-branch inverse temperature `β` (paper suppl.
+G.1: `softmax(β·z)` with `β > 1` is the temperature-sharpened control,
+τ = 1/β) are all exposed as flags (§6.1).
 
 ### 1.2 Intervention loci in GR00T N1.7
 
@@ -44,33 +44,32 @@ along two axes:
 | query group (`--pladis-qgroup`) | `state` / `action` / `all` | row slice of the attention map (`[state(0:n); action(n:)]`) |
 | key modality (`--pladis-kind`) | `text` / `image` / `all` | selection of even cross-blocks by the alternation rule |
 
-The 2×2 cells (`action×text`, `action×image`, `state×text`, `state×image`)
-plus `all×all` and two baselines form the 7-arm design evaluated throughout.
+Cells compose: `--pladis-cells actionxtext,stateximage` installs a different
+query group per key kind in one pass (kinds must be disjoint).
 
-### 1.3 Evaluation arms
+### 1.3 Arm vocabulary
 
 | arm | flags | role |
 |---|---|---|
 | `vanilla` | (none) | stock model, fused-SDPA attention |
 | `base0` | `--pladis-install --pladis-scale 0` | hook installed, λ=0 → delegates to the same fused SDPA; bit-identical to vanilla (install-plumbing control) |
-| eager-dense control | `--pladis-install --pladis-scale 1.0 --pladis-method softmax` | dense softmax computed on the hook's eager path; numeric-path-matched baseline for the λ=1 arms |
-| 4 locus cells | `--pladis-scale 1.0 --pladis-qgroup {state,action} --pladis-kind {text,image}` | the interventions under study |
-| `allxall` | `--pladis-scale 1.0 --pladis-qgroup all --pladis-kind all` | closest to the original PLADIS application |
+| eager-dense control | `--pladis-install --pladis-scale 1.0 --pladis-method softmax` | dense softmax computed on the hook's eager path; numeric-path-matched baseline for the λ>0 arms |
+| locus cells | `--pladis-scale λ --pladis-qgroup {state,action,all} --pladis-kind {text,image,all}` | the interventions under study |
+| mixed cells | `--pladis-scale λ --pladis-cells <cell,cell>` | per-kind query groups |
+| temperature control | `--pladis-scale 1.0 --pladis-method softmax --pladis-beta β` | sharpened-softmax counterpart to a sparse cell |
 
 ## 2. Benchmark and protocol
 
 - **Model**: [`nvidia/GR00T-N1.7-LIBERO`](https://huggingface.co/nvidia/GR00T-N1.7-LIBERO)
   (one fine-tuned checkpoint per suite), served through the **official
-  `Gr00tPolicy`** path (`harness/model_gr00t.py`). The harness anchor on
-  unperturbed LIBERO-10 reproduces the model-card number within sampling
-  error (91.0% @ n=100 vs 94.35% reported @ n=200).
+  `Gr00tPolicy`** path (`harness/model_gr00t.py`).
 - **Benchmark**: [LIBERO-plus](https://github.com/RLinf/LIBERO-plus)
   curated perturbation suites over the four LIBERO task suites
-  (libero_10 / goal / object / spatial). Axes evaluated:
+  (libero_10 / goal / object / spatial). Supported axes:
 
 | axis | episodes/arm | perturbation |
 |---|---|---|
-| `language` | 1,537 | instruction rephrasing only (verified: bddl differs in the `(:language)` line alone) |
+| `language` | 1,537 | instruction rephrasing only (gate-verified: bddl differs in the `(:language)` line alone) |
 | `layout` | 1,525 | scene changes — added distractors, moved objects/fixtures (BDDL placement resampling) |
 | `robot` | 1,550 | robot init-state offsets, 5 strength levels 0.1–0.5 rad (runtime `Panda{k}` swap) |
 | `none` (original) | 400 | unperturbed per-task baselines, init states 0–9 |
@@ -86,25 +85,28 @@ plus `all×all` and two baselines form the 7-arm design evaluated throughout.
 
 ```
 pladis/        attention hooks
-  attn_gr00t.py        weight-space implementation (faithful to the official
-                       PLADIS code path: eager blend at λ>0, native fused
-                       SDPA at λ=0) — the hook every result here was produced with
+  attn_gr00t.py        weight-space hook (faithful to the official PLADIS
+                       code path: eager blend at λ>0, native fused SDPA at
+                       λ=0); qgroup/kind/cells gating
+  attn_gr00t_fused.py  STAGED fused-anchored variant (§7); not imported by
+                       any entry point
   attn_pi0.py          π0/π0.5 (Gemma joint-attention) variant; STAGED, not
-                       wired to any entry point in this repository and not
-                       covered by the gates of §5
+                       wired to any entry point and not covered by §5 gates
 harness/       evaluation loop, fully owned
   env.py               curated schedules, per-axis delivery, deterministic
                        per-episode env seeding
   rollout.py           obs→policy→step loop, per-chunk noise pinning,
                        train-convention observation formatting
   model_gr00t.py       official Gr00tPolicy adapter
-  eplog.py             per-episode TSV ledger (crash-safe, resume source)
+  eplog.py             per-episode TSV ledger (crash-safe, resume source,
+                       arm-signature guarded)
   video.py             per-episode mp4 of the model's two camera views
 experiments/   entry points
   run.sh               environment wrapper (all commands go through it)
   eval_arm.py          single-arm evaluator — anchors, parity checks, and
                        sweeps share this one code path
-  sweep_n17_*.sh       sweep drivers (language / original / layout / robot)
+  sweep_n17_*.sh       sweep drivers (language / original / layout / robot);
+                       the arm list of each axis lives in the script itself
   verify_*.py          verification gates (§5)
   smoke_gr00t.py       GPU smoke test
 analysis/      analyze.py --language|--layout|--robot  (paired McNemar)
@@ -173,8 +175,8 @@ Bypassing the wrapper (inline env prefixes, direct `python`) is unsupported.
 The harness treats delivery and parity claims as testable artifacts. On a new
 machine or after dependency changes, run in order:
 
-1. **Anchor** — unperturbed LIBERO-10 reproduces the model-card success rate:
-   `eval_arm.py --axis none --episodes 100`.
+1. **Anchor** — unperturbed LIBERO-10 reproduces the published model-card
+   success rate within sampling error: `eval_arm.py --axis none --episodes 100`.
 2. **Instruction delivery** — `smoke_gr00t.py` asserts a language-variant
    episode reaches the model with the rephrased instruction (also logged per
    episode in the eplog `instruction` column).
@@ -188,9 +190,12 @@ machine or after dependency changes, run in order:
    silent-nullification regression, cross-process pairing),
    `verify_robot_axis.py` (wiring, delivery mechanism, determinism, level
    scaling).
+5. **Fused-anchored equivalence** (only if adopting `attn_gr00t_fused.py`,
+   §7) — `verify_fused_anchor.py cpu|cuda`.
 
-Gates 3–4 need the GPU + simulator stack of §4; there is no CPU-only test
-suite. All four are expected to print `PASS` / `ALL GATES PASSED` and exit 0.
+Gates 3–5 need the GPU + simulator stack of §4 (gate 5 has a CPU pre-check);
+there is no CPU-only test suite. All gates print `PASS` / `ALL GATES PASSED`
+and exit 0.
 
 ## 6. Running experiments
 
@@ -208,8 +213,10 @@ bash experiments/run.sh experiments/eval_arm.py \
 | flag | meaning |
 |---|---|
 | `--episodes` | `0` = every curated variant exactly once (seed-0 schedule); `N>0` = first N |
-| `--out` | eplog TSV; doubles as the **resume ledger** — episodes already logged are skipped |
-| `--pladis-*` | hooks are installed only via explicit flags (never environment variables) |
+| `--out` | eplog TSV; doubles as the **resume ledger** — episodes already logged are skipped (a fully-logged arm exits before the model loads) |
+| `--pladis-install` | hooks are installed only via explicit flags (never environment variables) |
+| `--pladis-scale` / `--pladis-method` / `--pladis-beta` | λ, sparse transform, sparse-branch inverse temperature (§1.1) |
+| `--pladis-qgroup` / `--pladis-kind` / `--pladis-cells` | intervention locus (§1.2) |
 | `--pladis-n-state-tokens` | leading state query rows (N1.7: 1); defines the `state`/`action` split |
 
 Eplog schema (TSV): `episode, task_name, base_task, init_state_id,
@@ -225,36 +232,33 @@ with a warning.
 ### 6.2 Sweeps
 
 ```bash
-nohup bash experiments/sweep_n17_robot.sh > results/sweep/driver_robot.out 2>&1 &
+nohup bash experiments/sweep_n17_<axis>.sh > results/sweep/driver_<axis>.out 2>&1 &
 ```
 
-| driver | arms × episodes | wall-clock |
-|---|---|---|
-| `sweep_n17_language.sh` | 9 × 1,537 (7 base arms + 2 composition arms: `allxtext`, `axt-sxi`) | ~31 h + ~9 h |
-| `sweep_n17_original.sh` | 7 × 400 | ~9 h |
-| `sweep_n17_layout.sh` | 7 × 1,525 | ~31–35 h |
-| `sweep_n17_robot.sh` | 7 × 1,550 (6 λ-arms + gated eager-dense control) | ~48 h |
-
-All drivers are resume-safe at episode granularity. Outputs follow
+One driver per axis (`language` / `original` / `layout` / `robot`). Each
+driver enumerates its arm list explicitly — the script is the source of truth
+for which arms an axis carries. All drivers are resume-safe at episode
+granularity, so re-running a driver skips completed arms and executes only
+what is new. Outputs follow
 `results/sweep/n17_{axis}_{arm}_{suite}_eplog.tsv` (+ a same-named `.out` log
 and, when enabled, `videos/n17_{axis}_{arm}_{suite}/ep#####_{S|F}_{task}.mp4`).
 
 ### 6.3 Analysis
 
 ```bash
-python3 analysis/analyze.py --language   # locus contrasts + both baselines
+python3 analysis/analyze.py --language
 python3 analysis/analyze.py --layout    # + perturbation-category breakdown
-python3 analysis/analyze.py --robot     # + strength-level (L1–L5) dose-response
+python3 analysis/analyze.py --robot     # + strength-level (L1–L5) breakdown
 ```
 
 **Statistical conventions.** Primary test: paired McNemar over the pooled
 episode pairing (`z = (n01 − n10)/√(n01+n10)`, no continuity correction),
 over `success_once`, reported per contrast with discordant counts. Pooled
 contrasts are primary; single-suite contrasts are interpreted conservatively
-(numeric-path noise alone was measured to produce single-suite |z| up to
-≈2.7 — see §7). `analyze.py` prints a Bonferroni-adjusted p over the pooled
-contrast family and marks which contrasts survive it. Each λ=1 arm is
-contrasted against **both** baselines (vanilla and the eager-dense control).
+(closed-loop rollouts amplify numeric noise at the single-suite scale — §7).
+`analyze.py` prints a Bonferroni-adjusted p over the pooled contrast family
+and marks which contrasts survive it. Each λ>0 arm is contrasted against
+**both** baselines (vanilla and the eager-dense control).
 
 ## 7. Determinism and numerical-path conventions
 
@@ -270,23 +274,21 @@ Recording videos does not perturb the RNG path (verified).
 the λ>0 blend requires materializing attention weights and therefore runs on
 an eager path — in the official PLADIS code exactly as here
 (`attn_gr00t.py` follows the official convention: native fused path at λ=0,
-eager weight-space blend at λ>0). Because closed-loop rollouts chaotically
-amplify rounding-floor differences, this fused↔eager transition is itself a
-measurable term: across 5,012 paired episodes (4 axes) the eager-dense
-control differs from vanilla by **−0.80 pp (McNemar z = −1.95)** pooled —
-small relative to the reported effects, and controlled for by reporting each
-arm against both baselines.
+eager weight-space blend at λ>0). Closed-loop rollouts chaotically amplify
+the rounding-floor difference between the two paths, so vanilla-vs-λ>0
+contrasts carry a numeric-path term alongside the intervention. The harness
+controls for it with the **eager-dense control arm** (§1.3), which runs the
+identical eager path with a plain softmax.
 
-A **fused-anchored** alternative is possible via the algebraic identity
-`(d + λ(s−d))·V = SDPA + λ·(s−d)·V` — the dense contribution of every arm
-would be the same fused SDPA call and the λ=0 arm bit-identical to vanilla by
-an IEEE identity rather than by branching, removing the fused↔eager term
-above. It is **not implemented in this repository**; every result here uses
-the weight-space hook and controls for the transition by reporting each arm
-against both baselines.
-
-<!-- §8 Results summary: to be added once the experimental campaign is
-     complete. Tables are regenerated by analysis/analyze.py. -->
+`pladis/attn_gr00t_fused.py` stages an alternative convention using the
+algebraic identity `(d + λ(s−d))·V = SDPA + λ·(s−d)·V`: the dense
+contribution of every arm is the same fused SDPA call, the correction term is
+always computed (no λ gate), and λ=0 is bit-identical to vanilla by an IEEE
+identity rather than by branching — removing the fused↔eager term by
+construction. It is verified by `verify_fused_anchor.py` (bit-parity at λ=0,
+row-level parity outside the query group, rounding-floor equivalence to the
+weight-space hook) but is **not wired to any entry point**; adopting it means
+copying it over `attn_gr00t.py` and re-running the §5 gates.
 
 ## 8. Acknowledgements
 
