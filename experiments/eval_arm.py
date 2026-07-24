@@ -2,14 +2,22 @@
 """Generic single-arm evaluator: anchor runs, parity checks, and sweep arms
 all go through this one entry point so every result shares one code path.
 
-  bash experiments/run.sh experiments/eval_arm.py \
-      --axis language --episodes 100 --seed 0 --out results/foo_eplog.tsv \
+  bash experiments/run.sh [--venv <venv>] experiments/eval_arm.py \
+      --model gr00t_n17 --axis language --episodes 100 --seed 0 \
+      --out results/foo_eplog.tsv \
       [--pladis-scale 1.0 --pladis-qgroup action --pladis-kind image]
 
-PLADIS is installed explicitly (pladis/attn_gr00t.py), never via env vars.
---pladis-scale 0 with --pladis-install gives base0: the hook is installed but
-delegates to the native fused SDPA (official PLADIS lambda=0 semantics), so
-base0 is BIT-identical to vanilla. Omitting --pladis-install gives vanilla.
+--model selects a ModelSpec from harness/registry.py: it resolves the
+adapter loader, the PLADIS hook module, the default checkpoint path, and the
+model's protocol defaults (exec horizon / step cap / n_state_tokens) for any
+flag left unset. Loader and hooks are imported lazily, AFTER the resume
+check, so a completed arm exits in seconds and a model never needs the other
+tracks' venvs.
+
+PLADIS is installed explicitly (the registry's hook module), never via env
+vars. --pladis-scale 0 with --pladis-install gives base0: the hook is
+installed but delegates to the model's native attention path, so base0 is
+BIT-identical to vanilla. Omitting --pladis-install gives vanilla.
 Resume: episodes already in --out are skipped (eplog is the ledger).
 """
 
@@ -22,29 +30,29 @@ import time
 
 from harness.env import LiberoPlusTaskSet, LiberoPlusSession
 from harness.eplog import EpisodeLogger
-from harness.model_gr00t import load_gr00t_n1d7
+from harness.registry import MODELS, resolve_hooks, resolve_loader
 from harness.rollout import run_episode
-
-MODEL = os.environ.get(
-    "GR00T_MODEL_PATH",
-    "/home/reallab/parkkwanjoon/workspace/models/GR00T-N1.7-LIBERO/libero_10",
-)
 
 
 def parse_args():
     p = argparse.ArgumentParser()
+    p.add_argument("--model", default="gr00t_n17", choices=sorted(MODELS),
+                   help="registry key (harness/registry.py); fills unset "
+                        "protocol defaults below")
     p.add_argument("--suite", default="libero_10")
     p.add_argument("--axis", default="language", help="language|light|... or 'none'")
     p.add_argument("--episodes", type=int, required=True,
                    help="0 = every curated task exactly once")
-    p.add_argument("--model-path", default=MODEL)
+    p.add_argument("--model-path", default=None,
+                   help="default: the registry's checkpoint root for --suite")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", required=True)
-    # official examples/LIBERO protocol: 720 env-step cap, execute 8 of the
-    # 16-step decoded chunk (receding horizon)
-    p.add_argument("--max-steps", type=int, default=720)
-    p.add_argument("--exec-horizon", type=int, default=8,
-                   help="execute first k of each chunk (official protocol: 8)")
+    # defaults of None resolve from the ModelSpec (gr00t_n17: official
+    # examples/LIBERO protocol — 720 env-step cap, execute 8 of the 16-step
+    # decoded chunk)
+    p.add_argument("--max-steps", type=int, default=None)
+    p.add_argument("--exec-horizon", type=int, default=None,
+                   help="execute first k of each chunk (gr00t_n17 official: 8)")
     p.add_argument("--video-dir", default=None,
                    help="record one mp4 (agentview+wrist) per episode into this dir")
     p.add_argument("--pladis-install", action="store_true")
@@ -59,10 +67,24 @@ def parse_args():
                    help="sparse-branch inverse temperature: sparse = method(beta*logits). "
                         "With --pladis-method softmax and beta>1 this is the paper's "
                         "S G.1 temperature-sharpened softmax control (tau = 1/beta)")
-    p.add_argument("--pladis-n-state-tokens", type=int, default=1,
+    p.add_argument("--pladis-n-state-tokens", type=int, default=None,
                    help="leading state query rows; splits the [state; action] "
-                        "sequence for --pladis-qgroup (N1.7: 1)")
-    return p.parse_args()
+                        "sequence for --pladis-qgroup (default: per model)")
+    args = p.parse_args()
+
+    # Fill protocol defaults from the ModelSpec. For gr00t_n17 the resolved
+    # values reproduce the historical literals byte-for-byte — the arm
+    # signature (and with it every existing eplog's resume) depends on that.
+    spec = MODELS[args.model]
+    if args.model_path is None:
+        args.model_path = spec.default_model_path(args.suite)
+    if args.max_steps is None:
+        args.max_steps = spec.default_max_steps
+    if args.exec_horizon is None:
+        args.exec_horizon = spec.default_exec_horizon
+    if args.pladis_n_state_tokens is None:
+        args.pladis_n_state_tokens = spec.default_n_state_tokens
+    return args, spec
 
 
 def _git_describe() -> str:
@@ -96,7 +118,7 @@ def _model_tag(model_path: str) -> str:
 
 
 def main():
-    args = parse_args()
+    args, spec = parse_args()
     axis = None if args.axis == "none" else args.axis
 
     # Everything that determines what an episode row means. The eplog is the
@@ -139,12 +161,17 @@ def main():
         print(f"[arm] DONE 0 eps (resume: all {len(sched)} already logged)", flush=True)
         return
 
-    model = load_gr00t_n1d7(args.model_path)
+    model = resolve_loader(spec)(args.model_path)
     if args.pladis_install:
+        hooks = resolve_hooks(spec)
         if args.pladis_cells:
-            from pladis.attn_gr00t import install_pladis_cells
-
-            installed = install_pladis_cells(
+            install_cells = getattr(hooks, "install_pladis_cells", None)
+            if install_cells is None:
+                raise SystemExit(
+                    f"[arm] hook module {spec.hook_module} has no install_pladis_cells "
+                    f"— --pladis-cells is not supported for model {spec.name!r}"
+                )
+            installed = install_cells(
                 model,
                 args.pladis_cells,
                 pladis_scale=args.pladis_scale,
@@ -153,9 +180,7 @@ def main():
                 n_state_tokens=args.pladis_n_state_tokens,
             )
         else:
-            from pladis.attn_gr00t import install_pladis
-
-            installed = install_pladis(
+            installed = hooks.install_pladis(
                 model,
                 pladis_scale=args.pladis_scale,
                 method=args.pladis_method,
