@@ -57,10 +57,14 @@ AXES = {
                  #   {actionxtext,allxtext,axt-sxi,actionximage,stateximage,statextext}15.
                  # 07-23 temperature control (softmax(beta*l), tau=1/beta) at
                  #   lambda=1 on a-x-t: axt-temp{15,20,30}.
+                 # 07-26 lambda=2.0 row over the four base cells:
+                 #   {actionxtext,actionximage,stateximage,statextext}20.
                  "extra_arms": ["allxtext", "axt-sxi",
                                 "actionxtext15", "allxtext15", "axt-sxi15",
                                 "actionximage15", "stateximage15", "statextext15",
-                                "axt-temp15", "axt-temp20", "axt-temp30"],
+                                "axt-temp15", "axt-temp20", "axt-temp30",
+                                "actionxtext20", "actionximage20",
+                                "stateximage20", "statextext20"],
                  "extra_contrasts": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -79,6 +83,17 @@ AXES = {
                      ("axt-temp15", "vanilla"), ("axt-temp15", "actionxtext"),
                      ("axt-temp20", "vanilla"), ("axt-temp20", "actionxtext"),
                      ("axt-temp30", "vanilla"), ("axt-temp30", "actionxtext"),
+                     # lambda=2.0 dose row: each arm vs vanilla and vs its
+                     # lambda=1/1.5 counterparts, plus the locus contrast at 2.0
+                     ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext"),
+                     ("actionxtext20", "actionxtext15"),
+                     ("actionximage20", "vanilla"), ("actionximage20", "actionximage"),
+                     ("actionximage20", "actionximage15"),
+                     ("stateximage20", "vanilla"), ("stateximage20", "stateximage"),
+                     ("stateximage20", "stateximage15"),
+                     ("statextext20", "vanilla"), ("statextext20", "statextext"),
+                     ("statextext20", "statextext15"),
+                     ("actionxtext20", "actionximage20"),
                  ]},
     "robot": {"prefix": "n17_robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"]},

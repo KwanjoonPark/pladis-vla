@@ -72,4 +72,11 @@ run axt-temp15 --pladis-install --pladis-scale 1.0 --pladis-method softmax --pla
 run axt-temp20 --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup action --pladis-kind text
 run axt-temp30 --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 3.0 --pladis-qgroup action --pladis-kind text
 
+# 2026-07-26 lambda=2.0 arms: extend the dose ladder (1.0 -> 1.5 -> 2.0) over
+# the four base cells.
+run actionxtext20  --pladis-install --pladis-scale 2.0 --pladis-qgroup action --pladis-kind text
+run actionximage20 --pladis-install --pladis-scale 2.0 --pladis-qgroup action --pladis-kind image
+run stateximage20  --pladis-install --pladis-scale 2.0 --pladis-qgroup state  --pladis-kind image
+run statextext20   --pladis-install --pladis-scale 2.0 --pladis-qgroup state  --pladis-kind text
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"
