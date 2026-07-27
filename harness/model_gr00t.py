@@ -14,7 +14,7 @@ Invariants kept:
     noise via global torch.randn (gr00t/model/gr00t_n1d7/gr00t_n1d7.py:335),
     no private generator.
   * PLADIS hooks install unchanged — .action_head exposes the same
-    AlternateVLDiT modules (pladis/attn_gr00t.py's _find_alternate_dit
+    AlternateVLDiT modules (pladis/attn_gr00t_n17.py's _find_alternate_dit
     resolves action_head.model on this adapter).
   * Official protocol: Gr00tPolicy(embodiment_tag="LIBERO_PANDA") -> value
     "libero_sim" -> projector id 2; processor applies the checkpoint's

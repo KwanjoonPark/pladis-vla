@@ -13,7 +13,7 @@
 # bit-for-bit via --pladis-scale 1.0 --pladis-method softmax (sparse branch ==
 # dense branch -> blend collapses to eager dense), giving this axis the same
 # [fused vanilla | eager base0 | eager lambda=1] ladder as language/layout.
-# It is gated on (1) attn_gr00t.py still being the weight-space hook and
+# It is gated on (1) attn_gr00t_n17.py still being the weight-space hook and
 # (2) a 2-episode language parity check against the stored pre-07-20 base0
 # eplog (requires sweep_n17_language.sh results).
 # Resume-safe at episode granularity.

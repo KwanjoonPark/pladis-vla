@@ -24,7 +24,7 @@ softmax (λ=0 parity).
 **π0.5-only.** π0 is dropped from this harness. Unlike GR00T's ``[state; action]`` suffix, π0.5's
 suffix is action-only — state is embedded as discrete language *keys*, not a query row — so the
 query-row (``qgroup``) axis collapses; the design axis is ``kind`` (which key modality sub-block to
-sparsify). ``qgroup`` is accepted only for API symmetry with ``attn_gr00t.py``: ``state`` is invalid
+sparsify). ``qgroup`` is accepted only for API symmetry with ``attn_gr00t_n17.py``: ``state`` is invalid
 (raises) and ``action`` == ``all``.
 
 Ported against transformers **4.53.2**'s gemma ``eager_attention_forward`` (the openpi-track pin).
@@ -59,7 +59,7 @@ class _Cfg:
     """Install-time config read by the (module-global) patched attention function.
 
     Set exclusively from ``install_pladis`` arguments — never from environment variables — so the
-    hook follows the explicit-flag convention of ``attn_gr00t.py``.
+    hook follows the explicit-flag convention of ``attn_gr00t_n17.py``.
     """
 
     scale: float = 0.0          # λ; 0 == vanilla (stock softmax, parity)
@@ -201,7 +201,7 @@ def install_pladis(
 ) -> str:
     """Install the PLADIS blend on the π0.5 Gemma-expert eager attention (explicit-flag entry).
 
-    Mirrors :func:`pladis.attn_gr00t.install_pladis`: configuration comes from ARGUMENTS (never
+    Mirrors :func:`pladis.attn_gr00t_n17.install_pladis`: configuration comes from ARGUMENTS (never
     environment variables), then transformers' gemma ``eager_attention_forward`` is monkeypatched.
     Returns a status string. Run one suffix inference and call :func:`assert_delivered` afterwards to
     prove the hook actually fired.
@@ -271,7 +271,7 @@ def assert_delivered() -> None:
 
     A zero count after a real suffix inference means the π0.5 Gemma expert is NOT on transformers'
     eager path, so the arm is silently identical to vanilla — the single most important failure to
-    catch. This ports the empty-install guard of ``attn_gr00t.py`` to the monkeypatch case; a
+    catch. This ports the empty-install guard of ``attn_gr00t_n17.py`` to the monkeypatch case; a
     delivery gate calls it after one forward. λ=0 is exempt (its blend is an intentional no-op)."""
     if not CFG.installed:
         raise RuntimeError("PLADIS not installed; call install_pladis(model, ...) first.")

@@ -43,7 +43,7 @@ G.1: `softmax(β·z)` with `β > 1` is the temperature-sharpened control,
 The GR00T N1.7 action head is an alternating DiT (`AlternateVLDiT`): odd
 blocks self-attend over the `[state; action]` token sequence; even blocks
 cross-attend to vision-language tokens, alternating between **text-key** and
-**image-key** blocks. The hook (`pladis/attn_gr00t.py`) restricts the blend
+**image-key** blocks. The hook (`pladis/attn_gr00t_n17.py`) restricts the blend
 along two axes:
 
 | axis | values | mechanism |
@@ -92,7 +92,7 @@ query group per key kind in one pass (kinds must be disjoint).
 
 ```
 pladis/        attention hooks
-  attn_gr00t.py        weight-space hook (faithful to the official PLADIS
+  attn_gr00t_n17.py        weight-space hook (faithful to the official PLADIS
                        code path: eager blend at λ>0, native fused SDPA at
                        λ=0); qgroup/kind/cells gating
   attn_pi05.py         π0.5 (Gemma joint-attention, FLUX-style: sparsify the
@@ -256,7 +256,7 @@ Recording videos does not perturb the RNG path (verified).
 **Numerical paths.** The vanilla model computes attention with fused SDPA;
 the λ>0 blend requires materializing attention weights and therefore runs on
 an eager path — in the official PLADIS code exactly as here
-(`attn_gr00t.py` follows the official convention: native fused path at λ=0,
+(`attn_gr00t_n17.py` follows the official convention: native fused path at λ=0,
 eager weight-space blend at λ>0). Closed-loop rollouts chaotically amplify
 the rounding-floor difference between the two paths, so vanilla-vs-λ>0
 contrasts carry a numeric-path term alongside the intervention. The harness

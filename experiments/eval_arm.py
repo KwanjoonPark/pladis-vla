@@ -6,7 +6,7 @@ all go through this one entry point so every result shares one code path.
       --axis language --episodes 100 --seed 0 --out results/foo_eplog.tsv \
       [--pladis-scale 1.0 --pladis-qgroup action --pladis-kind image]
 
-PLADIS is installed explicitly (pladis/attn_gr00t.py), never via env vars.
+PLADIS is installed explicitly (pladis/attn_gr00t_n17.py), never via env vars.
 --pladis-scale 0 with --pladis-install gives base0: the hook is installed but
 delegates to the native fused SDPA (official PLADIS lambda=0 semantics), so
 base0 is BIT-identical to vanilla. Omitting --pladis-install gives vanilla.
@@ -142,7 +142,7 @@ def main():
     model = load_gr00t_n1d7(args.model_path)
     if args.pladis_install:
         if args.pladis_cells:
-            from pladis.attn_gr00t import install_pladis_cells
+            from pladis.attn_gr00t_n17 import install_pladis_cells
 
             installed = install_pladis_cells(
                 model,
@@ -153,7 +153,7 @@ def main():
                 n_state_tokens=args.pladis_n_state_tokens,
             )
         else:
-            from pladis.attn_gr00t import install_pladis
+            from pladis.attn_gr00t_n17 import install_pladis
 
             installed = install_pladis(
                 model,
