@@ -7,3 +7,16 @@
 libero-plus	$WS/LIBERO-plus	https://github.com/RLinf/LIBERO-plus.git	ce59d7eb5b5d5ac20b922f4c11769b0da870113d
 rlinf	$WS/RLinf	https://github.com/RLinf/RLinf.git	d0a97caae5694d58fa7362b1544dd19fb379f470
 gr00t	$PLADIS_VENV_GR00T/gr00t	https://github.com/NVIDIA/Isaac-GR00T.git	23ace64f17aa5015259b8609d371eb61a357c776
+# openpi: the RLinf FORK, not upstream Physical-Intelligence/openpi. attn_pi05.py's
+# delivery mechanism was verified against this fork's transformers_replace gemma, whose
+# dispatch site resolves `eager_attention_forward` as a module global at call time
+# (transformers_replace/models/gemma/modeling_gemma.py:312-314) — that is what makes the
+# monkeypatch fire. The fork also carries pi0_pytorch.py (the PyTorch pi0.5) and the
+# transformers_replace tree that gets copied over site-packages/transformers.
+openpi	$WS/openpi	https://github.com/RLinf/openpi.git	c5dc4b9296a1a4739bf52828f28a579f12dce763
+# pladis: the official PLADIS release — REFERENCE ONLY, never installed. It is the source
+# of record for the blend formulas the two hooks port: pipeline_flux.py:104-113 (the
+# block-mass-preserving sub-block sharpening attn_pi05.py implements) and
+# pipeline_sdxl.py:93-99 + :1214-1215 (the whole-map blend and the lambda=0 gating
+# attn_gr00t_n17.py implements). verify_pi05_hook.py gate B asserts against it.
+pladis	$WS/PLADIS	https://github.com/cubeyoung/PLADIS.git	248b9d15701c08094c47dc90b4ae24afbf5cf7a9

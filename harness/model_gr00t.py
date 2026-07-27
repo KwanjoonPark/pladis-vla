@@ -27,6 +27,8 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from .rollout import libero_gripper_transform, wrap_obs_gr00t
+
 _ACTION_KEYS = ("x", "y", "z", "roll", "pitch", "yaw", "gripper")
 
 
@@ -38,6 +40,14 @@ class OfficialGr00tPolicy:
     gripper transform, mathematically identical to the official env's
     normalize+binarize+invert).
     """
+
+    # The rollout seam (harness/rollout.py). These were hardcoded calls inside
+    # run_episode until the pi0.5 track landed; naming them here keeps ONE rollout loop
+    # for both models with bit-identical behaviour for GR00T (same functions, same
+    # order). Contrast harness/model_pi05.py, whose postprocess_chunk is the identity
+    # because pi0.5 already emits LIBERO's [-1, +1] gripper.
+    wrap_obs = staticmethod(wrap_obs_gr00t)
+    postprocess_chunk = staticmethod(libero_gripper_transform)
 
     def __init__(self, model_path: str, device: str = "cuda"):
         from gr00t.policy.gr00t_policy import Gr00tPolicy, Gr00tSimPolicyWrapper

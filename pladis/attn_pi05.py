@@ -37,7 +37,7 @@ defense against that silent no-op.
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
@@ -51,7 +51,16 @@ except Exception as exc:  # pragma: no cover - surfaced only if entmax missing
     ) from exc
 
 _VALID_METHODS = ("entmax15", "sparsemax", "softmax")
-_VALID_KINDS = ("all", "text", "image")
+# text/image/prefix are single-block, mass-preserving sharpenings — the shape of the
+# operation the official FLUX code performs (PLADIS/pipeline/pipeline_flux.py:104-113
+# sharpens exactly one (generative-query x conditioning-key) block and leaves the rest
+# of the row dense). `all` blends the WHOLE row, which additionally sparsifies the
+# action<->action self-attention columns and lets mass migrate across modalities: that
+# is the SDXL operation (pipeline_sdxl.py:93-99), where attn2 really is cross-attention
+# so the whole row IS conditioning. On pi0.5's joint-attention row it is off-method
+# (PLADIS README: "within all cross-attention modules"), so `all` is a reference arm,
+# not the "both modalities" arm. The mass-preserving "all conditioning" arm is `prefix`.
+_VALID_KINDS = ("all", "text", "image", "prefix")
 
 
 @dataclass
@@ -71,6 +80,17 @@ class _Cfg:
     max_suffix_query: int = 100  # gate: only patch steps whose query length is <= this
     installed: bool = False
     n_calls: int = 0            # forwards that actually applied the sparse blend (delivery counter)
+    # (query_len, key_len) of every forward the blend actually fired on. Pure
+    # instrumentation, read by experiments/verify_pi05_delivery.py.
+    #
+    # Why it is worth carrying: PaliGemma's language model is ALSO a transformers gemma
+    # module and is ALSO forced onto the eager path (pi0_pytorch.py:447), so this
+    # module-global patch fires on the VLM pass too. Today the only thing keeping that
+    # pass dense is the `query_len > max_suffix_query` gate below. A config that
+    # autoregressively decodes tokens (query_len == 1) would slip UNDER that gate and be
+    # silently blended — an intervention we never intended, invisible in the eplog.
+    # Asserting seen_shapes == {(action_horizon, prefix+action_horizon)} catches it.
+    seen_shapes: set = field(default_factory=set)
 
 
 CFG = _Cfg()
@@ -98,6 +118,7 @@ def _pladis_blend(scores: torch.Tensor, query_len: Optional[int], key_len: int) 
         return dense
 
     CFG.n_calls += 1
+    CFG.seen_shapes.add((int(query_len), int(key_len)))
     scale, beta, method = CFG.scale, CFG.beta, CFG.method
     # finite scores for entmax (a causal/pad mask uses ~ -inf; entmax would NaN on it).
     neg = torch.finfo(torch.float32).min / 4
@@ -111,6 +132,14 @@ def _pladis_blend(scores: torch.Tensor, query_len: Optional[int], key_len: int) 
     # key axis = [ image(0:n_img) | language(n_img:n_img+n_lang) | suffix ]
     if CFG.kind == "text":
         lo, hi = CFG.n_img_prefix, CFG.n_img_prefix + CFG.n_lang
+    elif CFG.kind == "prefix":
+        # The whole conditioning prefix as ONE block: entmax normalizes across image AND
+        # language together, so mass may migrate between the two modalities, while the
+        # suffix (action<->action) columns stay exactly dense. This is the
+        # "did not choose a locus" counterpart to text/image — and it is NOT the same as
+        # text+image applied together, which would preserve each modality's mass
+        # separately. Still one FLUX-shaped single-block operation, unlike kind="all".
+        lo, hi = 0, CFG.n_img_prefix + CFG.n_lang
     else:  # image
         lo, hi = 0, CFG.n_img_prefix
     if hi > key_len:
@@ -230,6 +259,7 @@ def install_pladis(
     CFG.n_lang = nl
     CFG.max_suffix_query = int(max_suffix_query)
     CFG.n_calls = 0
+    CFG.seen_shapes = set()
 
     eager = _uses_eager_gemma(model)
     if eager is False:

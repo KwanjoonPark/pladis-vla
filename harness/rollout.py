@@ -143,12 +143,17 @@ def run_episode(
     success_once = False
     steps = 0
     while steps < max_steps:
-        env_obs = wrap_obs_gr00t(raw_obs, instruction)
+        # model.wrap_obs / model.postprocess_chunk are the two model-specific seams; both
+        # are MANDATORY adapter attributes, deliberately not getattr(..., default). A
+        # default would let a new adapter that forgets postprocess_chunk silently inherit
+        # GR00T's gripper remap — wrong absolute SR, invisible in arm-vs-arm contrasts.
+        # AttributeError on episode 1 is the correct behaviour.
+        env_obs = model.wrap_obs(raw_obs, instruction)
         # pin the flow init noise for this inference; same schedule in every arm
         torch.manual_seed(episode_seed * 100_003 + steps)
         with torch.no_grad():
             raw_action, _ = model.predict_action_batch(env_obs, mode="eval")
-        actions = libero_gripper_transform(np.asarray(raw_action))
+        actions = model.postprocess_chunk(np.asarray(raw_action))
         if actions.ndim == 3:  # (B=1, chunk, 7)
             actions = actions[0]
 
