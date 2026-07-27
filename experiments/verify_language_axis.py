@@ -4,7 +4,7 @@
 The language axis claims to be an INSTRUCTION-ONLY perturbation: a variant
 differs from its base task by the `(:language ...)` line and nothing else —
 same scene, same pruned_init states, neutral runtime tail. Delivery itself is
-checked continuously (rollout logs the instruction per episode; smoke_gr00t
+checked continuously (rollout logs the instruction per episode; smoke_model
 asserts variant != original), but the "nothing else differs" claim was only
 ever verified ad hoc (2026-07-16, in-session). This script codifies it:
 

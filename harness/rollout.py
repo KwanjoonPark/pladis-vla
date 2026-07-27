@@ -1,25 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Sequential rollout loop: obs → policy → step, with per-episode noise pinning.
 
-Owns the model-facing data path end-to-end (docs/benchmark.md):
-  * Observation formatting replicates RLinf's LIBERO conventions exactly —
-    both camera images rotated 180° ("to match train preprocessing",
-    rlinf/envs/libero/utils.py:90), state = [eef_pos(3), axisangle(3),
-    gripper_qpos(2)] (rlinf/envs/libero/libero_env.py:609-620).
+The loop is model-agnostic; every model-specific convention (observation
+formatting, action-space decode) lives behind the ModelAdapter interface
+(harness/model_base.py): wrap_obs → predict_chunk → to_env_actions.
+
+Owned here (docs/benchmark.md):
   * The instruction string is passed in explicitly by the caller (from
-    LiberoPlusSession.reset) and recorded per episode — delivery is data,
-    not assumption.
-  * Gripper mapping for LIBERO replicates rlinf/envs/action_utils.py:77-78:
-    g -> sign(2g-1) * -1.
-  * Flow init noise (torch.randn in the action head, no generator arg) is
-    pinned by reseeding torch before EVERY chunk inference with a value
-    derived from (episode_seed, control_step). Identical across arms =>
-    arms differ only through the intervention, not RNG stream drift.
+    LiberoPlusSession.reset), handed to the adapter, and recorded per
+    episode — delivery is data, not assumption.
+  * Flow init noise is pinned by reseeding the GLOBAL torch RNG before EVERY
+    chunk inference with a value derived from (episode_seed, control_step).
+    Identical across arms => arms differ only through the intervention, not
+    RNG stream drift. Valid only for models that draw their init noise from
+    the global stream (torch.randn/torch.normal without a generator) —
+    certified per model by its noise-pin gate before any sweep.
 """
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from dataclasses import dataclass
@@ -49,48 +48,6 @@ def variant_marker_of(spec: EpisodeSpec) -> str:
     return marker or "original"
 
 
-def quat2axisangle(quat: np.ndarray) -> np.ndarray:
-    """(x,y,z,w) quaternion -> axis-angle. Copied verbatim from robosuite via
-    rlinf/envs/libero/utils.py:112 (train-time state convention)."""
-    quat = quat.copy()
-    if quat[3] > 1.0:
-        quat[3] = 1.0
-    elif quat[3] < -1.0:
-        quat[3] = -1.0
-    den = np.sqrt(1.0 - quat[3] * quat[3])
-    if math.isclose(den, 0.0):
-        return np.zeros(3)
-    return (quat[:3] * 2.0 * math.acos(quat[3])) / den
-
-
-def wrap_obs_gr00t(raw_obs: dict, instruction: str) -> dict:
-    """Raw robosuite obs -> the env_obs dict GR00T's predict_action_batch expects
-    (B=1). Keys/dtypes mirror rlinf libero env's _wrap_obs output."""
-    main = raw_obs["agentview_image"][::-1, ::-1].copy()  # 180° rotation
-    wrist = raw_obs["robot0_eye_in_hand_image"][::-1, ::-1].copy()
-    state = np.concatenate(
-        [
-            raw_obs["robot0_eef_pos"],
-            quat2axisangle(raw_obs["robot0_eef_quat"]),
-            raw_obs["robot0_gripper_qpos"],
-        ]
-    ).astype(np.float32)
-    return {
-        "main_images": torch.from_numpy(main[None]),  # (1, H, W, 3) uint8
-        "wrist_images": torch.from_numpy(wrist[None]),
-        "states": torch.from_numpy(state[None]),  # (1, 8) float32
-        "task_descriptions": [instruction],
-    }
-
-
-def libero_gripper_transform(chunk: np.ndarray) -> np.ndarray:
-    """Model gripper in [0,1] -> LIBERO {-1,+1}; rlinf/envs/action_utils.py:77."""
-    chunk = chunk.copy()
-    chunk[..., -1] = 2 * chunk[..., -1] - 1
-    chunk[..., -1] = np.sign(chunk[..., -1]) * -1.0
-    return chunk
-
-
 @dataclass
 class EpisodeResult:
     episode: int
@@ -117,7 +74,8 @@ def run_episode(
     video_label: str = "",
     video_suite: str = "",
 ) -> EpisodeResult:
-    """exec_horizon: execute only the first k actions of each predicted chunk
+    """model: a ModelAdapter (harness/model_base.py).
+    exec_horizon: execute only the first k actions of each predicted chunk
     (re-plan every k steps). The validated Isaac-GR00T LIBERO protocol uses 8
     of 16; None executes the full chunk.
     video_dir: when set, record agentview+wrist (model's view) to one mp4 per
@@ -143,14 +101,12 @@ def run_episode(
     success_once = False
     steps = 0
     while steps < max_steps:
-        env_obs = wrap_obs_gr00t(raw_obs, instruction)
+        env_obs = model.wrap_obs(raw_obs, instruction)
         # pin the flow init noise for this inference; same schedule in every arm
         torch.manual_seed(episode_seed * 100_003 + steps)
         with torch.no_grad():
-            raw_action, _ = model.predict_action_batch(env_obs, mode="eval")
-        actions = libero_gripper_transform(np.asarray(raw_action))
-        if actions.ndim == 3:  # (B=1, chunk, 7)
-            actions = actions[0]
+            raw_chunk = model.predict_chunk(env_obs)
+        actions = model.to_env_actions(np.asarray(raw_chunk))
 
         for a in actions[:chunk_len]:
             raw_obs, _, _, _ = sess.step(a.astype(np.float32))

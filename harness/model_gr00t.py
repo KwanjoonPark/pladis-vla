@@ -27,17 +27,24 @@ from __future__ import annotations
 import numpy as np
 import torch
 
+from .model_base import quat2axisangle
+
 _ACTION_KEYS = ("x", "y", "z", "roll", "pitch", "yaw", "gripper")
 
 
 class OfficialGr00tPolicy:
-    """Official Gr00tPolicy behind the harness's model-facing interface.
+    """Official Gr00tPolicy behind the harness's ModelAdapter interface
+    (harness/model_base.py): wrap_obs / predict_chunk / to_env_actions own
+    every GR00T-specific observation and action convention.
 
     predict_action_batch(env_obs, mode="eval") -> (actions (B, 16, 7), None)
-    with the gripper in model space [0, 1] (rollout applies the LIBERO
-    gripper transform, mathematically identical to the official env's
+    is kept as the historical interface (verify_* scripts use it), with the
+    gripper in model space [0, 1] (to_env_actions applies the LIBERO gripper
+    transform, mathematically identical to the official env's
     normalize+binarize+invert).
     """
+
+    name = "gr00t_n17"
 
     def __init__(self, model_path: str, device: str = "cuda"):
         from gr00t.policy.gr00t_policy import Gr00tPolicy, Gr00tSimPolicyWrapper
@@ -55,6 +62,46 @@ class OfficialGr00tPolicy:
 
     def eval(self):
         return None  # keep the old loader contract (do not chain)
+
+    # ---- ModelAdapter interface (harness/model_base.py) ----
+
+    @staticmethod
+    def wrap_obs(raw_obs: dict, instruction: str) -> dict:
+        """Raw robosuite obs -> the env_obs dict predict_chunk expects (B=1).
+        Replicates RLinf's LIBERO train preprocessing exactly: both camera
+        images rotated 180° (rlinf/envs/libero/utils.py:90), state =
+        [eef_pos(3), axisangle(3), gripper_qpos(2)]
+        (rlinf/envs/libero/libero_env.py:609-620)."""
+        main = raw_obs["agentview_image"][::-1, ::-1].copy()  # 180° rotation
+        wrist = raw_obs["robot0_eye_in_hand_image"][::-1, ::-1].copy()
+        state = np.concatenate(
+            [
+                raw_obs["robot0_eef_pos"],
+                quat2axisangle(raw_obs["robot0_eef_quat"]),
+                raw_obs["robot0_gripper_qpos"],
+            ]
+        ).astype(np.float32)
+        return {
+            "main_images": torch.from_numpy(main[None]),  # (1, H, W, 3) uint8
+            "wrist_images": torch.from_numpy(wrist[None]),
+            "states": torch.from_numpy(state[None]),  # (1, 8) float32
+            "task_descriptions": [instruction],
+        }
+
+    def predict_chunk(self, env_obs: dict) -> np.ndarray:
+        chunk, _ = self.predict_action_batch(env_obs, mode="eval")
+        arr = np.asarray(chunk)
+        return arr[0] if arr.ndim == 3 else arr  # (16, 7), model action space
+
+    @staticmethod
+    def to_env_actions(chunk: np.ndarray) -> np.ndarray:
+        """Model gripper in [0,1] -> LIBERO {-1,+1}; rlinf/envs/action_utils.py:77."""
+        chunk = chunk.copy()
+        chunk[..., -1] = 2 * chunk[..., -1] - 1
+        chunk[..., -1] = np.sign(chunk[..., -1]) * -1.0
+        return chunk
+
+    # ---- historical batch interface (verify_* scripts) ----
 
     @torch.no_grad()
     def predict_action_batch(self, env_obs: dict, mode: str = "eval"):

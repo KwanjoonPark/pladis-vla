@@ -105,7 +105,7 @@ run. All commands go through `experiments/run.sh`.
 bash experiments/run.sh [--venv openpi] experiments/verify_externals.py
 
 # gr00t track
-bash experiments/run.sh experiments/smoke_gr00t.py          # model+env+instruction smoke
+bash experiments/run.sh experiments/smoke_model.py          # model+env+instruction smoke
 bash experiments/run.sh experiments/eval_arm.py \
   --axis none --episodes 100 --seed 0 --out results/anchor_eplog.tsv
 #   -> anchor: must reproduce the model-card success rate within sampling error

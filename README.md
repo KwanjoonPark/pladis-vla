@@ -120,7 +120,7 @@ experiments/   entry points
   sweep_n17_*.sh       sweep drivers (language / original / layout / robot);
                        the arm list of each axis lives in the script itself
   verify_*.py          verification gates (§5)
-  smoke_gr00t.py       GPU smoke test
+  smoke_model.py       GPU smoke test (registry-driven, --model)
 scripts/       externals.lock (pinned sibling-checkout SHAs) + clone_externals.sh
 analysis/      analyze.py --language|--layout|--robot  (paired McNemar)
 docs/          benchmark.md — cross-checked benchmark facts
@@ -147,7 +147,7 @@ selects the model track's venv, and sets EGL rendering, the ImageMagick
 library path, `PYTHONPATH`, and the HF token:
 
 ```bash
-bash experiments/run.sh experiments/smoke_gr00t.py                 # default venv: gr00t
+bash experiments/run.sh experiments/smoke_model.py                 # default venv: gr00t
 bash experiments/run.sh --venv openpi experiments/verify_externals.py
 ```
 
@@ -163,7 +163,7 @@ machine or after dependency changes, run in order:
    pins.
 1. **Anchor** — unperturbed LIBERO-10 reproduces the published model-card
    success rate within sampling error: `eval_arm.py --axis none --episodes 100`.
-2. **Instruction delivery** — `smoke_gr00t.py` asserts a language-variant
+2. **Instruction delivery** — `smoke_model.py` asserts a language-variant
    episode reaches the model with the rephrased instruction (also logged per
    episode in the eplog `instruction` column).
 3. **λ=0 parity** — `verify_base0_parity.py`: hook-installed λ=0 is
