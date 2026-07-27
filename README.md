@@ -98,7 +98,9 @@ pladis/        attention hooks
   attn_pi05.py         π0.5 (Gemma joint-attention, FLUX-style: sparsify the
                        language/image key sub-block, mass-preserving) variant;
                        explicit-flag install_pladis(); STAGED, not wired to any
-                       entry point and not covered by §5 gates
+                       entry point; CPU smoke gates pass (§5 gate 5) — the
+                       on-model delivery gate on the openpi machine is still
+                       required before wiring
 harness/       evaluation loop, fully owned
   env.py               curated schedules, per-axis delivery, deterministic
                        per-episode env seeding
@@ -174,9 +176,16 @@ machine or after dependency changes, run in order:
    silent-nullification regression, cross-process pairing),
    `verify_robot_axis.py` (wiring, delivery mechanism, determinism, level
    scaling).
+5. **π0.5 hook smoke (CPU)** — `verify_pi05_hook.py`: λ=0 and prefix passes
+   bit-identical to stock gemma eager attention; kind blend ≡ the official
+   FLUX mass-preserving formulation; row/block-mass preservation; β=1
+   softmax collapse; geometry/qgroup/`assert_delivered` defenses; real
+   `GemmaAttention` dispatch interception. Needs no openpi model — the
+   on-model delivery gate on the openpi machine is still required before
+   wiring `attn_pi05` to an entry point.
 
-Gates 3–4 need the GPU + simulator stack of §4; there is no CPU-only test
-suite. All gates print `PASS` / `ALL GATES PASSED` and exit 0.
+Gates 3–4 need the GPU + simulator stack of §4; gate 5 is CPU-only. All
+gates print `PASS` / `ALL GATES PASSED` and exit 0.
 
 ## 6. Running experiments
 
