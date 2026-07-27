@@ -12,7 +12,7 @@ delivery, seeding, rollout, and logging are all owned by this repository, and
 every delivery/parity claim is backed by an executable verification gate.
 
 **Design space.** Interventions are evaluated over a grid of models × axes:
-models {GR00T N1.7 (implemented); π0 / π0.5 (openpi track, in progress);
+models {GR00T N1.7 (implemented); π0.5 (openpi track, hook staged — π0 dropped);
 SmolVLA and GR00T N1.5 (planned)} × perturbation axes {language, layout,
 robot, original}. Campaigns are distributed across machines at
 (model × axis) granularity — all arms of one comparison share one machine
@@ -43,7 +43,7 @@ G.1: `softmax(β·z)` with `β > 1` is the temperature-sharpened control,
 The GR00T N1.7 action head is an alternating DiT (`AlternateVLDiT`): odd
 blocks self-attend over the `[state; action]` token sequence; even blocks
 cross-attend to vision-language tokens, alternating between **text-key** and
-**image-key** blocks. The hook (`pladis/attn_gr00t.py`) restricts the blend
+**image-key** blocks. The hook (`pladis/attn_gr00t_n17.py`) restricts the blend
 along two axes:
 
 | axis | values | mechanism |
@@ -92,13 +92,13 @@ query group per key kind in one pass (kinds must be disjoint).
 
 ```
 pladis/        attention hooks
-  attn_gr00t.py        weight-space hook (faithful to the official PLADIS
+  attn_gr00t_n17.py        weight-space hook (faithful to the official PLADIS
                        code path: eager blend at λ>0, native fused SDPA at
                        λ=0); qgroup/kind/cells gating
-  attn_gr00t_fused.py  STAGED fused-anchored variant (§7); not imported by
-                       any entry point
-  attn_pi0.py          π0/π0.5 (Gemma joint-attention) variant; STAGED, not
-                       wired to any entry point and not covered by §5 gates
+  attn_pi05.py         π0.5 (Gemma joint-attention, FLUX-style: sparsify the
+                       language/image key sub-block, mass-preserving) variant;
+                       explicit-flag install_pladis(); STAGED, not wired to any
+                       entry point and not covered by §5 gates
 harness/       evaluation loop, fully owned
   env.py               curated schedules, per-axis delivery, deterministic
                        per-episode env seeding
@@ -174,12 +174,9 @@ machine or after dependency changes, run in order:
    silent-nullification regression, cross-process pairing),
    `verify_robot_axis.py` (wiring, delivery mechanism, determinism, level
    scaling).
-5. **Fused-anchored equivalence** (only if adopting `attn_gr00t_fused.py`,
-   §7) — `verify_fused_anchor.py cpu|cuda`.
 
-Gates 3–5 need the GPU + simulator stack of §4 (gate 5 has a CPU pre-check);
-there is no CPU-only test suite. All gates print `PASS` / `ALL GATES PASSED`
-and exit 0.
+Gates 3–4 need the GPU + simulator stack of §4; there is no CPU-only test
+suite. All gates print `PASS` / `ALL GATES PASSED` and exit 0.
 
 ## 6. Running experiments
 
@@ -259,22 +256,12 @@ Recording videos does not perturb the RNG path (verified).
 **Numerical paths.** The vanilla model computes attention with fused SDPA;
 the λ>0 blend requires materializing attention weights and therefore runs on
 an eager path — in the official PLADIS code exactly as here
-(`attn_gr00t.py` follows the official convention: native fused path at λ=0,
+(`attn_gr00t_n17.py` follows the official convention: native fused path at λ=0,
 eager weight-space blend at λ>0). Closed-loop rollouts chaotically amplify
 the rounding-floor difference between the two paths, so vanilla-vs-λ>0
 contrasts carry a numeric-path term alongside the intervention. The harness
 controls for it with the **eager-dense control arm** (§1.3), which runs the
 identical eager path with a plain softmax.
-
-`pladis/attn_gr00t_fused.py` stages an alternative convention using the
-algebraic identity `(d + λ(s−d))·V = SDPA + λ·(s−d)·V`: the dense
-contribution of every arm is the same fused SDPA call, the correction term is
-always computed (no λ gate), and λ=0 is bit-identical to vanilla by an IEEE
-identity rather than by branching — removing the fused↔eager term by
-construction. It is verified by `verify_fused_anchor.py` (bit-parity at λ=0,
-row-level parity outside the query group, rounding-floor equivalence to the
-weight-space hook) but is **not wired to any entry point**; adopting it means
-copying it over `attn_gr00t.py` and re-running the §5 gates.
 
 ## 8. Acknowledgements
 

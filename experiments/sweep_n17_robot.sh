@@ -13,7 +13,7 @@
 # bit-for-bit via --pladis-scale 1.0 --pladis-method softmax (sparse branch ==
 # dense branch -> blend collapses to eager dense), giving this axis the same
 # [fused vanilla | eager base0 | eager lambda=1] ladder as language/layout.
-# It is gated on (1) attn_gr00t.py still being the weight-space hook and
+# It is gated on (1) attn_gr00t_n17.py still being the weight-space hook and
 # (2) a 2-episode language parity check against the stored pre-07-20 base0
 # eplog (requires sweep_n17_language.sh results).
 # Resume-safe at episode granularity.
@@ -47,10 +47,6 @@ run stateximage  --pladis-install --pladis-scale 1.0 --pladis-qgroup state  --pl
 run allxall      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pladis-kind all
 
 # ---- OLD-BASIS base0 (eager-dense) arm, gated ----
-if grep -q "fused-anchored" pladis/attn_gr00t.py; then
-  echo "[robot] ABORT base0: attn_gr00t.py is fused-anchored; old-basis base0 needs the weight-space hook"
-  exit 1
-fi
 REF=results/sweep/n17_lang_base0_libero_10_eplog.tsv
 if [ ! -f "$REF" ]; then
   echo "[robot] ABORT base0: parity reference $REF missing (run sweep_n17_language.sh first)"

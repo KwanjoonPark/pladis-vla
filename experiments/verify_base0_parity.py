@@ -16,7 +16,7 @@ import torch
 from diffusers.models.attention import Attention
 from diffusers.models.attention_processor import AttnProcessor2_0
 
-from pladis.attn_gr00t import PLADISAttnProcessor
+from pladis.attn_gr00t_n17 import PLADISAttnProcessor
 
 
 def main():
