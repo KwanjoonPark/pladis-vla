@@ -76,7 +76,12 @@ numerical-path-critical pins for the active venv.
   `eager_attention_forward` line-for-line — re-run the π0 λ=0 parity gate
   after ANY transformers upgrade)
 
-**lerobot** (SmolVLA; later phase) — to be defined with that track.
+**lerobot** (SmolVLA) — on this machine the track runs inside the gr00t venv
+(lerobot 0.4.4 is installed there; `PLADIS_VENV_LEROBOT` defaults to it in
+`load_machine_env.sh`). Extra pin: `num2words` (SmolVLM processor hard
+dependency). Checkpoint: HF `HuggingFaceVLA/smolvla_libero` →
+`$WS/models/smolvla_libero` (single checkpoint for all four suites). If HF
+requests 401, clear the stale token (`HF_TOKEN=`) — the repos are public.
 
 ## 4. Checkpoints (per machine, never in git)
 

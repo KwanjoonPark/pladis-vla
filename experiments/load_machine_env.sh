@@ -15,7 +15,7 @@ fi
 # venv per model track (bin/python inside each)
 : "${PLADIS_VENV_GR00T:=$WS/RLinf/gr00t_n1d7}"
 : "${PLADIS_VENV_OPENPI:=$WS/RLinf/openpi}"
-: "${PLADIS_VENV_LEROBOT:=}"
+: "${PLADIS_VENV_LEROBOT:=$WS/RLinf/gr00t_n1d7}"  # lerobot 0.4.4 lives in the gr00t venv on this machine
 # runtime dependencies
 : "${PLADIS_HF_TOKEN_FILE:=$HOME/.hf_user_token}"
 : "${PLADIS_MAGICK_HOME:=$WS/LIBERO-plus/.magick}"

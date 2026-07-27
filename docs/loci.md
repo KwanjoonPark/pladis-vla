@@ -110,16 +110,37 @@ vanilla path is already eager softmax — there is no fused↔eager numeric-path
 term on this track, so base0 (scale 0) is bit-identical to vanilla by the
 same code path and no eager-dense control arm is needed.
 
-## 3. SmolVLA — joint-key cross-attention (FLUX pattern) [planned]
+## 3. SmolVLA — interleaved CA/SA over a joint-key prefix [implemented]
 
-From lerobot's `modeling_smolvla.py` (to be re-measured with file:line when
-that track starts): the action expert interleaves cross-attention layers
-(action queries → cached prefix KV = `[64·frames visual | text | 1 state]`)
-with causal self-attention every 2nd layer. The cross-attention key set mixes
-modalities in one softmax → FLUX pattern again (region slice + mass renorm).
-Queries are action tokens only → **no qgroup axis** (fail fast); `kind` can
-gain a `state` key-region. Section must be completed and approved before the
-hook is written.
+Measured against lerobot 0.4.4 (`smolvlm_with_expert.py`) and verified on the
+`HuggingFaceVLA/smolvla_libero` checkpoint (delivery smoke, 2026-07-27):
+
+- All attention flows through ONE function, `eager_attention_forward`
+  (:504-548; `get_attention_interface` :500 resolves
+  `self.eager_attention_forward`, so an INSTANCE attribute shadows it —
+  the hook patches one served instance, nothing global).
+- Layer types (`attention_mode="cross_attn"`, `self_attn_every_n_layers=2`,
+  32 expert layers = 16 SA + 16 CA, both measured at 160 hook fires per
+  10-step denoise):
+  * CA (odd `layer_idx`): expert re-projects the cached VLM prefix K/V
+    (:342-365) — key axis `[image | language | state]`, NO suffix columns.
+  * SA (`layer_idx % 2 == 0`): suffix K/V concatenated onto cached prefix
+    K/V (:264-266) — key axis `[prefix | suffix]`, a π0.5-style joint row.
+- Prefix layout measured: `n_img = 128` (2 cameras × 64 connector tokens,
+  probed exactly: prefix_len 141 = 128 + 12 lang + 1 state), `n_state = 1`.
+  The language width is PER-EPISODE (tokenizer `padding="longest"`, ≤48) —
+  the hook self-calibrates from the prefix pass (q == k) of each inference
+  and exact-fits every denoise call against it (`pladis/attn_smolvla.py`).
+- Queries are action tokens only (suffix = action+timestep MLP; state is a
+  prefix KEY) → **no qgroup axis** (`state` raises). `kind` gains `state`
+  (key-side state — the dual of GR00T's state-query arms), `prefix`
+  (whole CA row = GR00T allxall analogue), and `self` (SA suffix block).
+- Sub-block kinds use the FLUX mass-preserving blend; `prefix` uses the
+  plain whole-row blend. Noise-pin admissible: `sample_noise` =
+  global `torch.normal` (modeling_smolvla.py:609).
+- Gates: `verify_smolvla_hook.py` (CPU, 7 gates incl. bit-parity vs stock
+  and self-calibration) + on-checkpoint delivery smoke (λ0 bit-equal
+  vanilla; text→CA-only, self→SA-only firing) — both ALL PASS.
 
 ## 4. GR00T N1.5 — dedicated cross-attention with fused-VL keys [planned]
 

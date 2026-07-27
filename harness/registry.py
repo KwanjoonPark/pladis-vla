@@ -49,6 +49,18 @@ MODELS: dict[str, ModelSpec] = {
         default_n_state_tokens=1,
         path_env_override="GR00T_MODEL_PATH",
     ),
+    "smolvla": ModelSpec(
+        name="smolvla",
+        venv="lerobot",
+        loader="harness.model_smolvla:load_smolvla",
+        hook_module="pladis.attn_smolvla",
+        model_root_env="MODEL_ROOT_SMOLVLA",
+        model_root_default="/home/reallab/parkkwanjoon/workspace/models/smolvla_libero",
+        per_suite=False,  # one HuggingFaceVLA/smolvla_libero checkpoint for all suites
+        default_exec_horizon=10,  # of the 50-step chunk; anchor gate compares candidates
+        default_max_steps=720,
+        default_n_state_tokens=1,
+    ),
 }
 
 
