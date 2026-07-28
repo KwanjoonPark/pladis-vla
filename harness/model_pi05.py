@@ -46,6 +46,28 @@ from .rollout import wrap_obs_gr00t
 _TRAIN_CONFIG_NAME = "pi05_libero"
 
 
+def preload_sim_stack() -> None:
+    """Load the MuJoCo/ImageMagick sim stack BEFORE anything imports ``openpi``.
+
+    ORDER MATTERS, and the failure is loud but cryptic: ``wand`` resolves
+    ``libMagickWand-7.Q16HDRI.so`` through ``ctypes.CDLL``, which fails once openpi's
+    import tree (jax / cv2 / sentencepiece) has pulled conflicting versions of that
+    library's own dependencies into the process. The symptom is
+    ``ImportError: MagickWand shared library not found`` at
+    ``liberoplus/envs/env_wrapper.py:15`` — pointing at ImageMagick, which is in fact
+    installed and loadable in a clean interpreter. Same hazard as
+    harness/model_gr00t.py:94-96 (torch/cv2 there).
+
+    ``OfficialPi05Policy.__init__`` calls this, so any entry point that constructs the
+    policy first is already safe. Entry points that touch ``openpi`` at module scope
+    before that — the gates reading openpi's own config/transforms
+    (experiments/verify_pi05_parity.py, experiments/smoke_pi05.py) — must call it
+    themselves, first thing, or they die at policy construction after paying the model
+    load. Idempotent: a second call is a no-op module lookup.
+    """
+    import liberoplus.liberoplus.envs  # noqa: F401  (pulls in wand)
+
+
 def _identity_chunk(chunk: np.ndarray) -> np.ndarray:
     """π0.5 actions are ALREADY in LIBERO's native gripper convention.
 
@@ -75,10 +97,7 @@ class OfficialPi05Policy:
     postprocess_chunk = staticmethod(_identity_chunk)
 
     def __init__(self, model_path: str, device: str = "cuda"):
-        # ORDER MATTERS: MagickWand's dlopen fails if torch/cv2 have already loaded
-        # conflicting shared libraries into this process (same hazard documented at
-        # harness/model_gr00t.py:86-90). Preload the sim stack first.
-        import liberoplus.liberoplus.envs  # noqa: F401  (pulls in wand)
+        preload_sim_stack()  # must precede the openpi imports below — see its docstring
 
         from openpi.policies import policy_config as _policy_config
         from openpi.training import config as _config

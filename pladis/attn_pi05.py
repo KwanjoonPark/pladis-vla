@@ -22,10 +22,18 @@ self-attention pass is left as stock softmax. ``scale == 0`` is numerically iden
 softmax (λ=0 parity).
 
 **π0.5-only.** π0 is dropped from this harness. Unlike GR00T's ``[state; action]`` suffix, π0.5's
-suffix is action-only — state is embedded as discrete language *keys*, not a query row — so the
-query-row (``qgroup``) axis collapses; the design axis is ``kind`` (which key modality sub-block to
-sparsify). ``qgroup`` is accepted only for API symmetry with ``attn_gr00t_n17.py``: ``state`` is invalid
-(raises) and ``action`` == ``all``.
+suffix is action-only, so the query-row (``qgroup``) axis collapses and the design axis is ``kind``
+(which key modality sub-block to sparsify). ``qgroup`` is accepted only for API symmetry with
+``attn_gr00t_n17.py``: ``state`` is invalid (raises) and ``action`` == ``all``.
+
+On the ``pi05_libero`` checkpoint the proprioceptive state is not an input AT ALL, by either route
+(verified 2026-07-28 against the π0.5 paper §IV-A / Appendix E and openpi's own config). The paper's
+π0.5 discretizes state into TEXT tokens in the prefix, and openpi makes that the default
+(``pi0_config.py:38-39``: ``discrete_state_input = pi05``) — but ``config.py:736`` overrides it to
+``False`` for LIBERO, so ``TokenizePrompt`` passes ``state=None``; and ``embed_suffix``
+(``pi0_pytorch.py:237-261``) only builds a state token when NOT ``pi05``. Consequence for this hook:
+the ``n_lang`` key block is PURE INSTRUCTION, with no state digits mixed in, so ``kind="text"`` is a
+clean language locus rather than "language + proprioception".
 
 Ported against transformers **4.53.2**'s gemma ``eager_attention_forward`` (the openpi-track pin).
 Because PLADIS needs materialized attention weights, this hook forces the eager gemma path — the
@@ -75,8 +83,18 @@ class _Cfg:
     method: str = "entmax15"    # entmax15 | sparsemax | softmax (softmax == eager-dense control)
     beta: float = 1.0           # inverse temperature on the SPARSE branch ONLY
     kind: str = "text"          # all | text | image  (which key modality sub-block to sparsify)
+    # ALLOCATED block widths — the slice bounds. The ATTENDABLE widths are smaller, because
+    # both blocks are padded and the padding is masked out (measured 2026-07-28):
+    #   image  768 -> 512: LIBERO has two cameras, so libero_policy.py:62-70 fills
+    #                      `right_wrist_0_rgb` with zeros and masks it (image_mask False for
+    #                      every non-PI0_FAST model).
+    #   lang   200 -> ~9-20: PaligemmaTokenizer pads to max_token_len=200 with mask=False.
+    # The blend is correct either way — masked columns carry dense~0, so the mass term
+    # `m = dense[..., lo:hi].sum()` integrates only attendable mass, and `clamp_min` keeps
+    # entmax finite on them. But any DOSE reported as a fraction of these widths understates
+    # the intervention (~10x on language); see experiments/diag_pi05_support.py.
     n_img_prefix: int = 768     # image key block width: 256 tokens * 3 openpi image slots
-    n_lang: int = 200           # language key block width (π0.5; overridable)
+    n_lang: int = 200           # language key block width (π0.5 max_token_len; overridable)
     max_suffix_query: int = 100  # gate: only patch steps whose query length is <= this
     installed: bool = False
     n_calls: int = 0            # forwards that actually applied the sparse blend (delivery counter)

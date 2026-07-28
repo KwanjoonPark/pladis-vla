@@ -12,11 +12,17 @@ delivery, seeding, rollout, and logging are all owned by this repository, and
 every delivery/parity claim is backed by an executable verification gate.
 
 **Design space.** Interventions are evaluated over a grid of models × axes:
-models {GR00T N1.7 (implemented); π0.5 (openpi track, hook staged — π0 dropped);
+models {GR00T N1.7 (implemented); π0.5 (openpi track, implemented — π0 dropped);
 SmolVLA and GR00T N1.5 (planned)} × perturbation axes {language, layout,
 robot, original}. Campaigns are distributed across machines at
 (model × axis) granularity — all arms of one comparison share one machine
 and stack (docs/SETUP.md §0).
+
+The two models expose **different intervention geometry**, and that difference is
+itself a result: GR00T N1.7 has a separate cross-attention module, so the locus
+factorizes as query group × key modality (§1.2); π0.5 has none — its action
+tokens attend jointly over `[image | language | suffix]` in one softmax — so the
+query axis collapses and the locus is the key sub-block alone (§1.3).
 
 ---
 
@@ -54,7 +60,69 @@ along two axes:
 Cells compose: `--pladis-cells actionxtext,stateximage` installs a different
 query group per key kind in one pass (kinds must be disjoint).
 
-### 1.3 Arm vocabulary
+### 1.3 Intervention loci in π0.5
+
+π0.5 has **no cross-attention module**. Its action ("suffix") tokens attend
+jointly to a concatenated key sequence through one softmax in the Gemma expert
+(a FLUX/MMDiT-style joint attention), so the blend is applied to a **column
+sub-block** of the attention map rather than to a whole module. The layout at a
+suffix denoising step, measured on the official checkpoint by
+`verify_pi05_delivery.py` — `(query_len, key_len) = (10, 978)`:
+
+```
+                        KEY  (978 columns)
+        ┌─────────────────────┬──────────────┬─────────────┐
+        │  image  [0:768]     │ language     │ suffix      │
+        │  3 slots × 256 tok  │ [768:968]    │ [968:978]   │
+ QUERY  ├─────────────────────┼──────────────┼─────────────┤
+ action │   --pladis-kind     │ --pladis-    │             │
+ 10 rows│      image          │  kind text   │             │
+        └─────────────────────┴──────────────┴─────────────┘
+                └────────── --pladis-kind prefix ──────────┘ (excl. suffix)
+                └──────────── --pladis-kind all ───────────────────────────┘
+```
+
+Those are the **allocated** widths — the slice bounds. The **attendable** widths
+are smaller, because both blocks are padded and the padding is masked out
+(measured 2026-07-28):
+
+| block | allocated | attendable | why the rest is masked |
+|---|---|---|---|
+| image | 768 | **512** | LIBERO has two cameras; `libero_policy.py:62-70` fills `right_wrist_0_rgb` with zeros and sets `image_mask=False` (it is `True` only for `PI0_FAST`) |
+| language | 200 | **~9–20** | `PaligemmaTokenizer` pads to `max_token_len=200` with `mask=False`; real LIBERO instructions tokenize to 9–20 |
+
+The blend is correct either way — masked columns carry `dense ≈ 0`, so the
+mass term `m = dense[…, lo:hi].sum()` integrates only attendable mass — but any
+**dose** quoted as a fraction of the allocated width understates the
+intervention, ~10× on language. See gate 5c in §5.
+
+Two consequences:
+
+1. **The query axis collapses.** `pi05_libero` sets `discrete_state_input=False`,
+   so proprio state never enters the transformer at all — the suffix is
+   action-only. Every π0.5 arm is implicitly `action × <keys>`, and
+   `--pladis-qgroup state` is rejected outright. This also makes the language
+   block **pure instruction**: the paper's π0.5 discretizes proprio state into
+   text tokens and openpi makes that the default (`pi0_config.py:38-39`), so on
+   a stock π0.5 the `text` locus would mean "language + proprioception". The
+   LIBERO config is the one that opts out, which is what lets `kind=text` be
+   read as a clean language locus here.
+2. **Sub-blocks are sharpened mass-preservingly.** For `text` / `image` /
+   `prefix` the block's total softmax mass `m` is preserved and only
+   redistributed within it — the pattern of the official FLUX code
+   (`PLADIS/pipeline/pipeline_flux.py:104-113`).
+
+| π0.5 arm | columns | relation to the original PLADIS |
+|---|---|---|
+| `kind=text` | `[768:968]` | **direct port** of the FLUX intervention: generative queries × conditioning keys, one block, mass-preserving |
+| `kind=image` | `[0:768]` | **no upstream precedent** — in FLUX the image tokens are the *queries*, never the keys. This is the contrast that makes "locus matters" testable |
+| `kind=prefix` | `[0:968]` | all conditioning as ONE block, so mass may migrate between image and language while the suffix columns stay dense. *Not* the same as text+image applied together, which would preserve each modality's mass separately |
+| `kind=all` | `[0:978]` | **off-method.** This is the SDXL operation (`pipeline_sdxl.py:93-99`, a whole-map blend where `attn2` genuinely *is* cross-attention) applied to a joint-attention row, so it also sparsifies action↔action self-attention. PLADIS is defined "within all cross-attention modules"; treat this as a reference arm, not the "both modalities" arm |
+
+The GR00T `state × …` cells have no π0.5 counterpart, so the π0.5 track
+corresponds to the **action row** of the 2×2 grid of §1.2, extended along λ.
+
+### 1.4 Arm vocabulary
 
 | arm | flags | role |
 |---|---|---|
@@ -64,6 +132,37 @@ query group per key kind in one pass (kinds must be disjoint).
 | locus cells | `--pladis-scale λ --pladis-qgroup {state,action,all} --pladis-kind {text,image,all}` | the interventions under study |
 | mixed cells | `--pladis-scale λ --pladis-cells <cell,cell>` | per-kind query groups |
 | temperature control | `--pladis-scale 1.0 --pladis-method softmax --pladis-beta β` | sharpened-softmax counterpart to a sparse cell |
+
+**The control arms differ between tracks, and not arbitrarily.** GR00T's vanilla
+runs fused SDPA while λ>0 must materialize weights on an eager path, so `base0`
+and the eager-dense arm exist to bracket a real kernel-level numeric difference
+(§7). π0.5's vanilla is *already* on the eager path (openpi forces
+`attn_implementation="eager"` on the expert every suffix step), so:
+
+- `base0` is bit-identical to vanilla (`verify_pi05_hook.py` gate A, re-confirmed
+  end-to-end by `verify_pi05_parity.py` check (b): eplogs equal over 10 episodes)
+  and is verified there instead of consuming a 1,537-episode arm — the same call
+  the n17 robot axis already made;
+- the **eager-dense control arm is kept anyway**, for a different reason than on
+  n17. With `method=softmax, β=1` the identity `m·p == dense[sub]` makes the
+  blend collapse to dense for any λ, so the arm should be redundant — and at
+  module level it is: check (c) finds **0.0000%** of bf16 attention elements
+  differing, `max|dw| = 0`. But end-to-end it is not. Over 10 libero_10
+  episodes, dense diverged from vanilla in **every one** (n_steps 197→186,
+  246→241, 270→259, …; SR 0.900 → 1.000). The residual is float32
+  reassociation inside the λ>0 branch — below bf16 resolution per call, and
+  amplified by ~45k closed-loop attention calls per episode.
+
+So π0.5 *does* carry a numeric term, just not GR00T's: not a fused-vs-eager
+**kernel** difference, but the reassociation the λ>0 code path itself
+introduces. Phase 1 is therefore four arms — `vanilla`, `base_dense`, `text`,
+`image` at λ=1 — and each λ>0 arm is contrasted against both baselines, exactly
+as on n17. `text − vanilla` mixes locus with the numeric term; `text −
+base_dense` isolates it.
+
+This arm was written out of the design and then reinstated (2026-07-28) by the
+measurement intended to retire it. The `if it turns out to matter, the arm goes
+back in` clause is the reason check (c) exists rather than being assumed away.
 
 ## 2. Benchmark and protocol
 
@@ -81,10 +180,25 @@ query group per key kind in one pass (kinds must be disjoint).
 | `robot` | 1,550 | robot init-state offsets, 5 strength levels 0.1–0.5 rad (runtime `Panda{k}` swap) |
 | `none` (original) | 400 | unperturbed per-task baselines, init states 0–9 |
 
-- **Rollout protocol** (official Isaac-GR00T LIBERO evaluation): 720 env-step
-  cap, 16-step decoded action chunk with the first 8 executed (receding
-  horizon), success-on-first-contact termination. Primary metric:
-  `success_once` per episode.
+- **π0.5 model**: the official `pi05_libero` checkpoint
+  (`gs://openpi-assets/checkpoints/pi05_libero`, converted to PyTorch), served
+  through the **official `openpi.policies.policy.Policy`** path
+  (`harness/model_pi05.py`). RLinf is deliberately not on that path — see §7.
+- **Rollout protocol.** Each track uses *its own model's* official protocol,
+  because the anchor gate has to reproduce a published number; a shared protocol
+  would make both anchors unreproducible by construction.
+
+| | GR00T N1.7 (official Isaac-GR00T) | π0.5 (official openpi) |
+|---|---|---|
+| env-step cap | 720 | per suite: spatial 220 / object 280 / goal 300 / libero_10 520 |
+| decoded chunk | 16 | 10 |
+| executed (receding horizon) | 8 | 5 |
+| settle steps after reset | 10 | 10 |
+| denoising steps | — | 10 (openpi default) |
+
+  Both terminate on first contact with success. Primary metric: `success_once`
+  per episode. The cost of this choice is that cross-*model* absolute SR
+  comparisons carry a protocol term; within-model arm contrasts do not.
 - **Pairing**: all arms of an axis share the same seed-0 schedule, so
   episodes are paired across arms by construction (asserted at load time).
 
@@ -95,18 +209,20 @@ pladis/        attention hooks
   attn_gr00t_n17.py        weight-space hook (faithful to the official PLADIS
                        code path: eager blend at λ>0, native fused SDPA at
                        λ=0); qgroup/kind/cells gating
-  attn_pi05.py         π0.5 (Gemma joint-attention, FLUX-style: sparsify the
-                       language/image key sub-block, mass-preserving) variant;
-                       explicit-flag install_pladis(); STAGED, not wired to any
-                       entry point; CPU smoke gates pass (§5 gate 5) — the
-                       on-model delivery gate on the openpi machine is still
-                       required before wiring
+  attn_pi05.py         π0.5 joint-attention hook (FLUX-style: sharpen ONE key
+                       sub-block, mass-preserving); explicit-flag
+                       install_pladis() + assert_delivered() (§1.3)
 harness/       evaluation loop, fully owned
   env.py               curated schedules, per-axis delivery, deterministic
                        per-episode env seeding
-  rollout.py           obs→policy→step loop, per-chunk noise pinning,
-                       train-convention observation formatting
+  rollout.py           obs→policy→step loop, per-chunk noise pinning; the
+                       model-specific obs/action conversion is delegated to the
+                       adapters' wrap_obs / postprocess_chunk, so both tracks
+                       share ONE loop
   model_gr00t.py       official Gr00tPolicy adapter
+  model_pi05.py        official openpi Policy adapter — un-compiles
+                       sample_actions, and postprocess_chunk is the identity
+                       (π0.5 already emits LIBERO's [-1,+1] gripper)
   eplog.py             per-episode TSV ledger (crash-safe, resume source,
                        arm-signature guarded)
   video.py             per-episode mp4 of the model's two camera views
@@ -115,14 +231,19 @@ experiments/   entry points
                        --venv selects the model track's interpreter
   load_machine_env.sh  machine config loader (defaults + machine.env override)
   machine.env.example  per-machine config template (copy to machine.env)
-  eval_arm.py          single-arm evaluator — anchors, parity checks, and
-                       sweeps share this one code path
-  sweep_n17_*.sh       sweep drivers (language / original / layout / robot);
-                       the arm list of each axis lives in the script itself
+  eval_arm.py          single-arm evaluator, BOTH tracks (--model) — anchors,
+                       parity checks, and sweeps share this one code path
+  sweep_n17_*.sh       n17 sweep drivers (language / original / layout / robot);
+                       arm-outer, suite-inner
+  sweep_pi05_*.sh      π0.5 sweep drivers (+ sweep_pi05_common.sh); SUITE-outer,
+                       one suite per GPU (§6.2)
   verify_*.py          verification gates (§5)
+  diag_pi05_support.py entmax support-size measurement (§5 gate 5c)
   smoke_gr00t.py       GPU smoke test
+  smoke_pi05.py        GPU smoke + instruction delivery asserted at the tokenizer
 scripts/       externals.lock (pinned sibling-checkout SHAs) + clone_externals.sh
-analysis/      analyze.py --language|--layout|--robot  (paired McNemar)
+analysis/      analyze.py [--model n17|pi05] --language|--layout|--robot
+               (paired McNemar)
 docs/          benchmark.md — cross-checked benchmark facts
 results/       (gitignored) eplogs, videos, driver logs
 ```
@@ -180,12 +301,73 @@ machine or after dependency changes, run in order:
    bit-identical to stock gemma eager attention; kind blend ≡ the official
    FLUX mass-preserving formulation; row/block-mass preservation; β=1
    softmax collapse; geometry/qgroup/`assert_delivered` defenses; real
-   `GemmaAttention` dispatch interception. Needs no openpi model — the
-   on-model delivery gate on the openpi machine is still required before
-   wiring `attn_pi05` to an entry point.
+   `GemmaAttention` dispatch interception. Needs no openpi model, no GPU and no
+   external checkout — on a fresh machine this is the cheapest first milestone.
+5b. **π0.5 on-model delivery** — `verify_pi05_delivery.py`: the blend actually
+   fires on a real chunk (`assert_delivered`), at exactly
+   `(query_len, key_len) = (10, 978)`; the large-query PaliGemma prefix pass
+   stays dense; the expert config reads `eager` *after* a forward;
+   `sample_actions` is not a `torch.compile` wrapper. This is the gate that
+   catches the π0.5-specific silent no-op — a λ>0 arm that runs as vanilla
+   while the eplog and `.arm` sidecar both claim an intervention.
+5c. **π0.5 support size (measurement, not pass/fail)** — `diag_pi05_support.py`:
+   how many columns entmax15 actually keeps per block. Read it before choosing
+   λ: an intervention that keeps 190 of 200 language columns cannot produce an
+   interpretable null result, and it is also what decides whether `kind=prefix`
+   earns an arm (does image's 768 columns crowd language's 200 out entirely?).
+   Measured 2026-07-28, λ ∈ {1, 1.5, 2}, libero_10 language variants:
 
-Gates 3–4 need the GPU + simulator stack of §4; gate 5 is CPU-only. All
-gates print `PASS` / `ALL GATES PASSED` and exit 0.
+   | kind | allocated | kept (median) | of **attendable** |
+   |---|---|---|---|
+   | text | 200 | 1 | ~7 % (of ~15) |
+   | image | 768 | 8 | 1.6 % (of 512) |
+   | prefix | 968 | 2 | — |
+   | all | 978 | 3 | — |
+
+   Two readings that the raw output does not give you. **(i) Read the dose
+   against the attendable width, not the allocated one** (§1.3): the tool
+   divides by block width, so its "0.5 % of 200" for `text` is really ~7 % of
+   the ~15 real tokens. The dose is aggressive, not marginal — the opposite of
+   the failure mode this diagnostic was written to catch. **(ii) Support is
+   λ-independent**, and the tool says so: entmax15 acts on `β·logits`, and λ
+   only mixes its output with dense, so λ scales the *strength* of the
+   intervention while leaving *which* columns survive untouched. β is the only
+   sparsity knob, and it is 1.0 on every phase-1 arm.
+
+   For `prefix` the result inverts the hypothesis. The question was whether
+   image's 768 columns crowd language's 200 out; instead language survives
+   (`zero-language rows` 9.9 %, median language mass share 1.0000) and **image**
+   is what gets eliminated. So the planned ground for dropping `prefix` from
+   phase 2 does not hold — the open question is now whether it is distinguishable
+   from `text`. `all` behaves as designed for a reference arm: 23 % of rows lose
+   language entirely and median language mass share falls to 0.83, i.e. mass
+   migrates into the action↔action columns.
+
+π0.5's counterparts to gates 1–3 are `sweep_pi05_original.sh` (anchor, must
+reproduce openpi's published 98.8 / 98.2 / 98.0 / **92.4**), `smoke_pi05.py`
+(instruction delivery, asserted at openpi's tokenizer rather than at our own
+adapter boundary), and `verify_pi05_parity.py` (λ=0 bit parity at the real
+shapes + `base0` ≡ vanilla end-to-end + the dense-collapse measurement — which
+was written to retire the eager-dense arm and instead reinstated it, §1.4).
+
+**π0.5 anchor, measured** (2026-07-27, A6000, 100 episodes/suite, `--axis none`,
+seed 0, `exec_horizon=5`, `max_steps` 520 for libero_10 / 300 elsewhere):
+
+| suite | this harness | openpi published (pi0.5 @ 30k) |
+|---|---|---|
+| libero_object | 100.0 | 98.8 |
+| libero_spatial | 99.0 | 98.2 |
+| libero_goal | 97.0 | 98.0 |
+| libero_10 | **95.0** | **92.4** |
+
+Every suite is within sampling error of the model card at n=100 (±~2–3 pts,
+1σ), so the serving path of §7 reproduces the published table. libero_10 is the
+load-bearing one — it is the long-horizon suite, the one the serving-route
+bisect depressed to 45% on the GR00T track, and the gate the sweep is blocked
+on: it must land in [87, 98].
+
+Gates 3–4, 5b and the anchors need the GPU + simulator stack of §4; gate 5 is
+CPU-only. All gates print `PASS` / `ALL GATES PASSED` and exit 0.
 
 ## 6. Running experiments
 
@@ -208,6 +390,25 @@ bash experiments/run.sh experiments/eval_arm.py \
 | `--pladis-scale` / `--pladis-method` / `--pladis-beta` | λ, sparse transform, sparse-branch inverse temperature (§1.1) |
 | `--pladis-qgroup` / `--pladis-kind` / `--pladis-cells` | intervention locus (§1.2) |
 | `--pladis-n-state-tokens` | leading state query rows (N1.7: 1); defines the `state`/`action` split |
+| `--model` | `gr00t_n17` (default) or `pi05`; selects the loader **and** the hook |
+
+The same evaluator runs the π0.5 track:
+
+```bash
+bash experiments/run.sh --venv openpi experiments/eval_arm.py --model pi05 \
+  --suite libero_10 --axis language --episodes 0 --seed 0 \
+  --max-steps 520 --exec-horizon 5 \
+  --model-path ../models/pi05_libero --out results/my_arm_eplog.tsv \
+  [--pladis-install --pladis-scale 1.0 --pladis-kind text]
+```
+
+π0.5-only flags: `--pladis-n-img-prefix` (768), `--pladis-n-lang` (200),
+`--pladis-max-suffix-query` (100) — the key-axis geometry of §1.3, re-validated
+against the live `key_len` at run time. `--pladis-qgroup`, `--pladis-cells` and
+`--pladis-n-state-tokens` are rejected for `pi05` (no query axis), and
+`--pladis-kind prefix` is rejected for `gr00t_n17` (it names a column span, not a
+block set). `--pladis-method` defaults per track (`ent15max` / `entmax15`) and
+accepts either spelling.
 
 Eplog schema (TSV): `episode, task_name, base_task, init_state_id,
 instruction, success_once, success_at_end, n_steps, wall_s`.
@@ -235,12 +436,31 @@ arms and executes only what is new. Outputs follow
 `results/sweep/n17_{axis}_{arm}_{suite}_eplog.tsv` (+ a same-named `.out` log
 and, when enabled, `videos/n17_{axis}_{arm}_{suite}/ep#####_{S|F}_{task}.mp4`).
 
+The π0.5 drivers are **suite-outer**: they take the suite as `$1` and walk that
+suite's whole arm list, so one suite pins to one GPU.
+
+```bash
+CUDA_VISIBLE_DEVICES=4 nohup bash experiments/sweep_pi05_language.sh libero_10      > results/sweep/driver_lang_libero_10.out 2>&1 &
+CUDA_VISIBLE_DEVICES=5 nohup bash experiments/sweep_pi05_language.sh libero_goal    > results/sweep/driver_lang_libero_goal.out 2>&1 &
+CUDA_VISIBLE_DEVICES=6 nohup bash experiments/sweep_pi05_language.sh libero_object  > results/sweep/driver_lang_libero_object.out 2>&1 &
+CUDA_VISIBLE_DEVICES=7 nohup bash experiments/sweep_pi05_language.sh libero_spatial > results/sweep/driver_lang_libero_spatial.out 2>&1 &
+```
+
+**Why per-suite GPU sharding is legitimate** under the one-machine-one-stack rule
+(docs/SETUP.md §0): the analysis pairs episodes by `(suite, episode)`, so a
+McNemar pair never crosses suites, and pinning a *suite* to a device keeps every
+pair on one numeric stack. Pinning an *arm* to a device would put a numeric-path
+difference **inside** a pair — that is what §0 forbids. The suite→GPU map must
+therefore stay fixed across every arm of a campaign; each run appends
+`dev <n> <name> <uuid>` to the `.arm` sidecar so it is auditable after the fact.
+
 ### 6.3 Analysis
 
 ```bash
 python3 analysis/analyze.py --language
 python3 analysis/analyze.py --layout    # + perturbation-category breakdown
 python3 analysis/analyze.py --robot     # + strength-level (L1–L5) breakdown
+python3 analysis/analyze.py --model pi05 --language
 ```
 
 **Statistical conventions.** Primary test: paired McNemar over the pooled
@@ -249,8 +469,11 @@ over `success_once`, reported per contrast with discordant counts. Pooled
 contrasts are primary; single-suite contrasts are interpreted conservatively
 (closed-loop rollouts amplify numeric noise at the single-suite scale — §7).
 `analyze.py` prints a Bonferroni-adjusted p over the pooled contrast family
-and marks which contrasts survive it. Each λ>0 arm is contrasted against
-**both** baselines (vanilla and the eager-dense control).
+and marks which contrasts survive it. On **both** tracks each λ>0 arm is
+contrasted against **both** baselines — vanilla and the eager-dense control —
+because both tracks carry a numeric-path term, though for different reasons
+(§1.4, §7). The primary contrast per track is the **locus** pair:
+`actionxtext − actionximage` for n17, `text − image` for π0.5.
 
 ## 7. Determinism and numerical-path conventions
 
@@ -269,8 +492,36 @@ an eager path — in the official PLADIS code exactly as here
 eager weight-space blend at λ>0). Closed-loop rollouts chaotically amplify
 the rounding-floor difference between the two paths, so vanilla-vs-λ>0
 contrasts carry a numeric-path term alongside the intervention. The harness
-controls for it with the **eager-dense control arm** (§1.3), which runs the
+controls for it with the **eager-dense control arm** (§1.4), which runs the
 identical eager path with a plain softmax.
+
+**π0.5's term is different in kind, and had to be measured to be found.** openpi
+forces the Gemma expert onto transformers' eager attention on every suffix step,
+so vanilla, `base0` and the λ>0 arms all run one kernel — there is no
+fused-vs-eager difference to bracket. λ=0 is indeed bit-identical to vanilla,
+and the softmax/β=1 "control" does collapse to dense by an algebraic identity,
+leaving only floating-point reassociation. The design predicted that residual
+would be negligible; `verify_pi05_parity.py` check (c) measured it instead of
+assuming it, and the prediction was wrong. At module level the residual is
+literally zero in bf16 (0.0000% of elements, `max|dw| = 0`), but a closed-loop
+episode issues ~45k of those calls (18 expert layers × 10 denoise steps × ~250
+chunks), and over 10 libero_10 episodes dense diverged from vanilla in **all
+ten** (SR 0.900 → 1.000). So the eager-dense arm stays — not to absorb a kernel
+difference, but the reassociation the λ>0 code path introduces on its own.
+
+The general lesson the two tracks share: **a λ>0 arm never runs on the same
+numeric path as vanilla, whatever the reason**, so both tracks carry two
+baselines.
+
+**Serving path.** Both tracks are served through their model's *official* policy
+object, not through RLinf's RL wrappers. This is a finding, not a preference: a
+controlled bisect (2026-07-14; stock LIBERO env, official protocol, same
+GPU/ckpt, 20 eps each) showed RLinf's
+`GR00T_N1_7_ForRLActionPrediction.predict_action_batch` depressing libero_10 from
+80% to 45%, matching a depressed 46% anchor at the time. Those wrappers exist to
+serve *training* rollouts. `harness/model_pi05.py` therefore builds the openpi
+`Policy` from `openpi.*` alone; RLinf stays importable only as the reference
+implementation for that bisect.
 
 ## 8. Acknowledgements
 
@@ -279,6 +530,8 @@ This repository builds on:
 [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO) /
 [LIBERO-plus](https://github.com/RLinf/LIBERO-plus) (benchmark),
 [Isaac-GR00T](https://github.com/NVIDIA/Isaac-GR00T) (model and serving),
+[openpi](https://github.com/Physical-Intelligence/openpi) (π0.5 model, PyTorch
+port and serving),
 [entmax](https://github.com/deep-spin/entmax) (sparse transformations).
 
 ## License

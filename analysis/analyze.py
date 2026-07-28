@@ -3,7 +3,7 @@
   python analysis/analyze.py --layout                # n17_layout_*  (7 arms x 1,525 eps)
   python analysis/analyze.py --language              # n17_lang_*    (7 arms x 1,537 eps)
   python analysis/analyze.py --robot                 # n17_robot_*   (7 arms x 1,550 eps)
-  python analysis/analyze.py --model pi05 --language  # pi05_lang_*  (3 arms x 1,537 eps)
+  python analysis/analyze.py --model pi05 --language  # pi05_lang_*  (4 arms x 1,537 eps)
 
 Pairing: identical seed-0 schedule across arms -> pair by (suite, episode);
 task_name equality is asserted. Test = paired McNemar, z = (n01-n10)/sqrt(disc).
@@ -48,22 +48,34 @@ MODELS = {
         "cat_contrasts": [("actionxtext", "actionximage"), ("actionxtext", "base0"),
                           ("actionximage", "base0")],
     },
-    # pi0.5 phase 1: 3 arms. base0 is NOT an arm here — it is bit-identical to vanilla
-    # (verify_pi05_hook.py gate A) and is covered by verify_pi05_parity.py instead, the
-    # same call sweep_n17_robot.sh:9-12 made for the n17 robot axis. Neither is there an
-    # eager-dense control: pi0.5's vanilla is already on the eager path
-    # (pi0_pytorch.py:447), so there is no fused-vs-eager kernel term to absorb and
-    # vanilla IS the numeric control (quantified by verify_pi05_parity.py check (c)).
+    # pi0.5 phase 1: 4 arms. base0 is NOT an arm here — it is bit-identical to vanilla
+    # (verify_pi05_hook.py gate A, re-confirmed end-to-end by verify_pi05_parity.py check
+    # (b)) and would burn 1,537 episodes re-proving a 10-episode assertion; the same call
+    # sweep_n17_robot.sh:9-12 made for the n17 robot axis.
+    #
+    # base_dense IS an arm (added 2026-07-28). The earlier reasoning here — "pi0.5's
+    # vanilla is already on the eager path, so vanilla IS the numeric control" — was
+    # refuted by the measurement meant to confirm it: verify_pi05_parity.py check (c)
+    # found 0.0000% of bf16 attention elements differing at module level, yet dense
+    # diverged from vanilla in ALL 10 rollout episodes (SR 0.900 -> 1.000). The residual
+    # is float32 reassociation inside the λ>0 branch, below bf16 resolution per call and
+    # amplified by ~45k closed-loop attention calls per episode. So each λ>0 arm is
+    # contrasted against BOTH baselines, as on the n17 track: `text - vanilla` mixes
+    # locus with that numeric term, `text - base_dense` isolates it.
     "pi05": {
         "tag": "pi05",
-        "arms": ["vanilla", "text", "image"],
+        "arms": ["vanilla", "base_dense", "text", "image"],
         "key_contrasts": [
             ("text", "image"),                        # THE locus contrast
-            ("text", "vanilla"), ("image", "vanilla"),
+            ("text", "base_dense"), ("text", "vanilla"),
+            ("image", "base_dense"), ("image", "vanilla"),
+            ("base_dense", "vanilla"),                # size of the numeric term itself
         ],
         "locus_pair": ("text", "image"),
-        "suite_contrasts": [("text", "image"), ("text", "vanilla"), ("image", "vanilla")],
-        "cat_contrasts": [("text", "image")],
+        "suite_contrasts": [("text", "image"), ("text", "base_dense"),
+                            ("image", "base_dense"), ("base_dense", "vanilla")],
+        "cat_contrasts": [("text", "image"), ("text", "base_dense"),
+                          ("image", "base_dense")],
         # phase 2 candidates; skipped until all four suite eplogs exist
         "extra_arms": ["prefix", "all", "text15", "image15", "text20", "image20"],
         "extra_contrasts": [

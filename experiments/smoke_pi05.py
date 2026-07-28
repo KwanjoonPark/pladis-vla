@@ -28,8 +28,12 @@ import argparse
 import os
 
 from harness.env import LiberoPlusSession, LiberoPlusTaskSet
-from harness.model_pi05 import load_pi05
+from harness.model_pi05 import load_pi05, preload_sim_stack
 from harness.rollout import run_episode
+
+# `_install_prompt_probe()` imports openpi.transforms, which poisons MagickWand's dlopen
+# for the rest of the process — load_pi05 would then die at the liberoplus import.
+preload_sim_stack()
 
 TOKENIZED: list[str] = []
 

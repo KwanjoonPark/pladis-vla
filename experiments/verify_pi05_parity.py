@@ -36,10 +36,15 @@ import os
 import torch
 
 from harness.env import LiberoPlusSession, LiberoPlusTaskSet
-from harness.model_pi05 import load_pi05
+from harness.model_pi05 import load_pi05, preload_sim_stack
 from harness.rollout import run_episode
 from pladis import attn_pi05
 from pladis.attn_pi05 import CFG, install_pladis
+
+# `_expert_shape()` below imports openpi at MODULE scope, which poisons MagickWand's
+# dlopen for the rest of the process — check (b)'s load_pi05 would then die at
+# liberoplus import, after check (a) has already run. Preload first.
+preload_sim_stack()
 
 # real pi05_libero geometry, confirmed on the checkpoint by verify_pi05_delivery.py
 N_IMG, N_LANG, SUFFIX = 768, 200, 10
