@@ -79,4 +79,14 @@ run actionximage20 --pladis-install --pladis-scale 2.0 --pladis-qgroup action --
 run stateximage20  --pladis-install --pladis-scale 2.0 --pladis-qgroup state  --pladis-kind image
 run statextext20   --pladis-install --pladis-scale 2.0 --pladis-qgroup state  --pladis-kind text
 
+# 2026-07-28 sharp-softmax dose row (beta=2 = ent15-matched strength, supp G.1):
+# does the lambda>1 extrapolation behavior at the text loci survive replacing
+# entmax with temperature sharpening? axt-temp20 (lambda=1) is the anchor;
+# the allxt-temp* arms pair against allxtext{,15} (the strongest entmax cell).
+run axt-temp20l15   --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup action --pladis-kind text
+run axt-temp20l20   --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup action --pladis-kind text
+run allxt-temp20    --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all    --pladis-kind text
+run allxt-temp20l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all    --pladis-kind text
+run allxt-temp20l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all    --pladis-kind text
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

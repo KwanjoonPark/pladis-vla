@@ -59,12 +59,18 @@ AXES = {
                  #   lambda=1 on a-x-t: axt-temp{15,20,30}.
                  # 07-26 lambda=2.0 row over the four base cells:
                  #   {actionxtext,actionximage,stateximage,statextext}20.
+                 # 07-28 sharp-softmax dose row (beta=2, ent15-matched): the
+                 #   lambda ladder at both text loci — axt-temp20l{15,20} and
+                 #   allxt-temp20{,l15,l20} — head-to-head vs the entmax
+                 #   counterparts (zeros-vs-sharpening in the extrapolation regime).
                  "extra_arms": ["allxtext", "axt-sxi",
                                 "actionxtext15", "allxtext15", "axt-sxi15",
                                 "actionximage15", "stateximage15", "statextext15",
                                 "axt-temp15", "axt-temp20", "axt-temp30",
                                 "actionxtext20", "actionximage20",
-                                "stateximage20", "statextext20"],
+                                "stateximage20", "statextext20",
+                                "axt-temp20l15", "axt-temp20l20",
+                                "allxt-temp20", "allxt-temp20l15", "allxt-temp20l20"],
                  "extra_contrasts": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -94,6 +100,18 @@ AXES = {
                      ("statextext20", "vanilla"), ("statextext20", "statextext"),
                      ("statextext20", "statextext15"),
                      ("actionxtext20", "actionximage20"),
+                     # sharp-softmax dose row: each temp arm vs vanilla, vs its
+                     # entmax counterpart (zeros head-to-head at matched dose),
+                     # and the within-temp dose/locus neighbors
+                     ("axt-temp20l15", "vanilla"), ("axt-temp20l15", "actionxtext15"),
+                     ("axt-temp20l15", "axt-temp20"),
+                     ("axt-temp20l20", "vanilla"), ("axt-temp20l20", "actionxtext20"),
+                     ("axt-temp20l20", "axt-temp20l15"),
+                     ("allxt-temp20", "vanilla"), ("allxt-temp20", "allxtext"),
+                     ("allxt-temp20l15", "vanilla"), ("allxt-temp20l15", "allxtext15"),
+                     ("allxt-temp20l15", "allxt-temp20"),
+                     ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxt-temp20l15"),
+                     ("allxt-temp20l15", "axt-temp20l15"),
                  ]},
     "robot": {"prefix": "n17_robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"]},
