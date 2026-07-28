@@ -55,9 +55,14 @@ MODELS: dict[str, ModelSpec] = {
         loader="harness.model_smolvla:load_smolvla",
         hook_module="pladis.attn_smolvla",
         model_root_env="MODEL_ROOT_SMOLVLA",
-        model_root_default="/home/reallab/parkkwanjoon/workspace/models/smolvla_libero",
-        per_suite=False,  # one HuggingFaceVLA/smolvla_libero checkpoint for all suites
-        default_exec_horizon=10,  # of the 50-step chunk; anchor gate compares candidates
+        # lerobot/smolvla_libero (org-official, datasets: lerobot/libero). Anchor
+        # libero_10 n=100: 64% vs paper-0.45B Long 71 (z~1.4, consistent); beats
+        # HuggingFaceVLA/smolvla_libero 50% paired +14pp z=2.27 (models/smolvla_libero).
+        model_root_default="/home/reallab/parkkwanjoon/workspace/models/smolvla_libero_official",
+        per_suite=False,  # one checkpoint for all suites
+        # exec-horizon insensitivity measured on libero_10: h1 vs h10 paired n=20
+        # discordant 3:2 (z~0.4) -> keep 10 (8x cheaper than the paper's per-step sim protocol)
+        default_exec_horizon=10,
         default_max_steps=720,
         default_n_state_tokens=1,
     ),
