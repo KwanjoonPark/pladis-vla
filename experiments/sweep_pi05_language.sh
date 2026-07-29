@@ -95,4 +95,59 @@ run text  --video-dir "results/sweep/videos/${PREFIX}_text_${SUITE}" \
 run image --video-dir "results/sweep/videos/${PREFIX}_image_${SUITE}" \
           --pladis-install --pladis-scale 1.0 --pladis-kind image
 
+# ---------------------------------------------------------------------------------
+# PHASE 2, 2026-07-29 — DOSE LADDER λ = 1.0 -> 1.5 -> 2.0 over the locus pair.
+#
+# Motivated by the λ=1 result: the locus contrast `text - image` = +1.63pp
+# (z=+2.65, p_bonf=0.048) was the only contrast of six to survive Bonferroni, but the
+# effect is small and `text - vanilla` was +0.33pp, i.e. the intervention barely beats
+# doing nothing. A dose ladder tests whether the locus effect is monotone in λ or
+# whether λ=1 already sits at the useful maximum.
+#
+# λ>1 IS EXTRAPOLATION, not interpolation. PLADIS is parameterized
+# `λ*sparse + (1-λ)*dense` (pipeline_flux.py:109), so at λ>1 the dense coefficient is
+# negative and every column entmax dropped comes out at `(1-λ)*dense < 0` — a NEGATIVE
+# attention weight (λ=1.5: -0.5*dense; λ=2.0: -1.0*dense). The row still sums to the
+# block's original mass, because the survivors are pushed above dense by exactly the
+# deficit. λ=1.5 is the regime the PLADIS authors recommend and the n17 track already
+# runs it, but π0.5 has no precedent here, so diag_pi05_support.py measured the negative
+# lobe first (2026-07-29, 3 eps/cell). Result — the extrapolation is well behaved, with
+# ONE asymmetry that matters for interpretation:
+#
+#   λ    kind   block cols negative   min w (med)   negative mass   row sum
+#   1.0  both                  0.0%       +0.0000          0.0000   1.000000
+#   1.5  text                  6.5%       -0.0046          0.0206   1.000000
+#   1.5  image                65.9%       -0.0021          0.0710   1.000000
+#   2.0  text                  6.5%       -0.0092          0.0415   1.000000
+#   2.0  image                66.0%       -0.0043          0.1460   1.000000
+#
+#   * Normalization holds exactly: row sums are 1.000000 with max deviation 2.7e-06.
+#   * Magnitudes stay small (>= -0.05 even at λ=2) and negative mass is LINEAR in λ-1,
+#     which is the closed-form prediction — a cross-check that the implementation
+#     follows PLADIS's parameterization.
+#   * text vs image differ 10x in negative EXPOSURE, and it is the padding structure:
+#     image has 512 attendable columns of which ~8 survive, so most attendable columns
+#     go negative; text has ~15 attendable of 200, and the ~185 masked columns carry
+#     dense~0 so their negative image is ~0 (6.5% x 200 = 13 cols = the attendable
+#     width). CONSEQUENCE: at λ>1 the `text - image` contrast carries an extra term
+#     that λ=1 did not have — image absorbs a much larger negative perturbation. The
+#     per-λ base_dense does NOT absorb it (base_dense never sparsifies, so it has no
+#     negative lobe at all). Interpret the λ>1 locus contrasts with that in mind.
+#
+# base_dense IS REPEATED PER λ, and that is not redundancy. Its blend is
+# `w = dense + λ*(m*p - dense[sub])`; the bracket is algebraically zero but numerically
+# ε, so the residual scales as λ*ε — the very term this arm exists to absorb GROWS with
+# λ. At λ=1 it was already worth -0.91pp (base_dense - vanilla). Contrasting a λ=2 arm
+# against the λ=1 control would leave half of it uncontrolled.
+# ---------------------------------------------------------------------------------
+run base_dense15 --pladis-install --pladis-scale 1.5 --pladis-method softmax \
+          --pladis-beta 1.0 --pladis-kind text
+run text15  --pladis-install --pladis-scale 1.5 --pladis-kind text
+run image15 --pladis-install --pladis-scale 1.5 --pladis-kind image
+
+run base_dense20 --pladis-install --pladis-scale 2.0 --pladis-method softmax \
+          --pladis-beta 1.0 --pladis-kind text
+run text20  --pladis-install --pladis-scale 2.0 --pladis-kind text
+run image20 --pladis-install --pladis-scale 2.0 --pladis-kind image
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

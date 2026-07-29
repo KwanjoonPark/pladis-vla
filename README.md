@@ -334,6 +334,30 @@ machine or after dependency changes, run in order:
    intervention while leaving *which* columns survive untouched. β is the only
    sparsity knob, and it is 1.0 on every phase-1 arm.
 
+   The same tool also measures the **λ>1 extrapolation** (added 2026-07-29).
+   PLADIS is parameterized `λ·sparse + (1−λ)·dense`, so above λ=1 the dense
+   coefficient is negative and every column entmax dropped lands at
+   `(1−λ)·dense < 0`:
+
+   | λ | kind | block cols negative | min w (med) | negative mass | row sum |
+   |---|---|---|---|---|---|
+   | 1.0 | both | 0.0 % | +0.0000 | 0.0000 | 1.000000 |
+   | 1.5 | `text` | 6.5 % | −0.0046 | 0.0206 | 1.000000 |
+   | 1.5 | `image` | 65.9 % | −0.0021 | 0.0710 | 1.000000 |
+   | 2.0 | `text` | 6.5 % | −0.0092 | 0.0415 | 1.000000 |
+   | 2.0 | `image` | 66.0 % | −0.0043 | 0.1460 | 1.000000 |
+
+   Normalization holds exactly (max row-sum deviation 2.7e−06), magnitudes stay
+   small, and negative mass is linear in λ−1 — the closed-form prediction, so
+   this doubles as a check that the port follows PLADIS's parameterization.
+   The asymmetry is what matters for interpretation: `image` puts **66 %** of
+   its block below zero against `text`'s 6.5 %, because `image` has 512
+   attendable columns of which ~8 survive, while `text`'s ~185 masked columns
+   carry `dense ≈ 0` and so contribute ~0 when negated. **At λ>1 the
+   `text − image` contrast therefore carries a term λ=1 did not have**, and the
+   per-λ `base_dense` does not absorb it (that arm never sparsifies, so it has
+   no negative lobe at all).
+
    For `prefix` the result inverts the hypothesis. The question was whether
    image's 768 columns crowd language's 200 out; instead language survives
    (`zero-language rows` 9.9 %, median language mass share 1.0000) and **image**
@@ -474,6 +498,39 @@ contrasted against **both** baselines — vanilla and the eager-dense control �
 because both tracks carry a numeric-path term, though for different reasons
 (§1.4, §7). The primary contrast per track is the **locus** pair:
 `actionxtext − actionximage` for n17, `text − image` for π0.5.
+
+**π0.5 language axis, λ=1 (phase 1 complete, 2026-07-29).** 4 arms × 1,537
+curated variants, seed-0 schedule, paired.
+
+| arm | pooled | 10 | goal | object | spatial |
+|---|---|---|---|---|---|
+| `vanilla` | 87.12 | 89.0 | 72.0 | 92.4 | 96.4 |
+| `base_dense` | 86.21 | 86.9 | 71.5 | 91.8 | 95.9 |
+| **`text`** | **87.44** | 89.8 | 71.2 | 92.4 | 97.7 |
+| `image` | 85.82 | 88.8 | 69.5 | 91.2 | 95.1 |
+
+| contrast | Δ | discordant | z | p | p<sub>bonf</sub> |
+|---|---|---|---|---|---|
+| **`text − image`** | **+1.63 pp** | 57 : 32 | +2.65 | 0.0080 | **0.048 ✱** |
+| `text − base_dense` | +1.24 pp | 46 : 27 | +2.22 | 0.026 | 0.157 |
+| `text − vanilla` | +0.33 pp | 38 : 33 | +0.59 | 0.553 | 1 |
+| `image − base_dense` | −0.39 pp | 48 : 54 | −0.59 | 0.553 | 1 |
+| `image − vanilla` | −1.30 pp | 39 : 59 | −2.02 | 0.043 | 0.260 |
+| `base_dense − vanilla` | −0.91 pp | 24 : 38 | −1.78 | 0.075 | 0.452 |
+
+The locus contrast is the only one of six to survive Bonferroni. Both arms run
+the identical operation at the identical λ with the same mass preservation —
+they differ *only* in which modality's keys are sharpened.
+
+**The eager-dense arm changed the reading.** `text − vanilla` is +0.33 pp,
+i.e. against vanilla alone the intervention looks inert. But `base_dense` sits
+0.91 pp *below* vanilla — the numeric term §1.4 predicted, same sign at 1,537
+episodes as in the 10-episode gate — so once it is controlled for, `text` is
++1.24 pp. The arm the design had written out is what makes the effect legible.
+
+Note also the severity spread on the baseline itself: language perturbation
+costs libero_goal **−24.7 pp** against its task-matched original, versus −2.5
+to −7.6 pp elsewhere. Pooled numbers average over a very uneven axis.
 
 ## 7. Determinism and numerical-path conventions
 

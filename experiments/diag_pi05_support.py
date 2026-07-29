@@ -97,9 +97,63 @@ class SupportStats:
                       "effectively 'image-only + language ablation', NOT 'both modalities'")
 
 
-def _install_probe(stats: SupportStats):
-    """Record every sparse block distribution, then delegate to the real transform."""
+class BlendStats:
+    """λ>1 extrapolation accounting, measured on the BLEND OUTPUT (not the sparse branch).
+
+    PLADIS is parameterized `λ·sparse + (1−λ)·dense` (pipeline_flux.py:109). At λ>1 the
+    dense coefficient goes negative, so every column entmax dropped (p=0) comes out at
+    `(1−λ)·dense < 0` — a NEGATIVE attention weight. That is intended, CFG-style
+    extrapolation, and the row still sums to the same mass because the surviving columns
+    are pushed above dense by exactly the deficit. But π0.5 has no precedent for it (the
+    n17 λ=1.5 arms ran on another server), and negative weights on the action expert's
+    joint attention are worth quantifying BEFORE spending 4,600 episodes on them.
+
+    Reports, per λ and kind: what fraction of the block goes negative, how far, how much
+    mass is routed through the negative lobe, and whether the full row still normalizes.
+    """
+
+    def __init__(self):
+        self.rows = 0
+        self.neg_frac = []      # fraction of block columns with w < 0
+        self.min_w = []         # most negative weight in the block, per row
+        self.neg_mass = []      # total |negative| mass in the block, per row
+        self.row_sum = []       # full-row sum, must stay ~1 (normalization check)
+        self._calls = 0
+
+    def add(self, w: torch.Tensor, lo: int, hi: int) -> None:
+        """w: blended weights over the FULL key axis, [B, H, Q, K], float32."""
+        self._calls += 1
+        if self._calls % 7:     # same subsampling as SupportStats
+            return
+        w = w.detach().float()
+        sub = w[..., lo:hi]
+        width = sub.shape[-1]
+        neg = sub < 0
+        self.rows += sub.shape[:-1].numel()
+        self.neg_frac.append((neg.sum(-1).flatten() / width).cpu().numpy())
+        self.min_w.append(sub.amin(-1).flatten().cpu().numpy())
+        self.neg_mass.append(sub.clamp(max=0).sum(-1).neg().flatten().cpu().numpy())
+        self.row_sum.append(w.sum(-1).flatten().cpu().numpy())
+
+    def report(self) -> None:
+        if not self.neg_frac:
+            print("          (no blended rows recorded)")
+            return
+        nf = np.concatenate(self.neg_frac) * 100.0
+        mw = np.concatenate(self.min_w)
+        nm = np.concatenate(self.neg_mass)
+        rs = np.concatenate(self.row_sum)
+        print(f"          negative w: rows affected {100.0 * float((nf > 0).mean()):5.1f}% | "
+              f"block cols negative med={np.median(nf):5.1f}% p95={np.percentile(nf, 95):5.1f}% | "
+              f"min w med={np.median(mw):+.4f} p05={np.percentile(mw, 5):+.4f}")
+        print(f"          negative mass med={np.median(nm):.4f} p95={np.percentile(nm, 95):.4f} | "
+              f"row sum med={np.median(rs):.6f} (max dev {np.abs(rs - 1.0).max():.2e})")
+
+
+def _install_probe(stats: SupportStats, blend: "BlendStats"):
+    """Record the sparse block distribution AND the blended output, then delegate."""
     orig = attn_pi05._sparse
+    orig_blend = attn_pi05._pladis_blend
 
     def probe(z, method):
         p = orig(z, method)
@@ -107,8 +161,19 @@ def _install_probe(stats: SupportStats):
         stats.add(p, lo, hi)
         return p
 
+    def blend_probe(scores, query_len, key_len):
+        w = orig_blend(scores, query_len, key_len)
+        cfg = attn_pi05.CFG
+        # Only rows the blend actually touched: the dense-return paths (λ=0, the
+        # large-query PaliGemma prefix pass) carry no extrapolation to measure.
+        if cfg.scale != 0.0 and query_len is not None and query_len <= cfg.max_suffix_query:
+            lo, hi = _block_of(cfg)
+            blend.add(w, lo, hi)
+        return w
+
     attn_pi05._sparse = probe
-    return orig
+    attn_pi05._pladis_blend = blend_probe
+    return orig, orig_blend
 
 
 def _block_of(cfg):
@@ -144,7 +209,8 @@ def main() -> int:
         print(f"λ = {scale:g}")
         for kind in args.kinds.split(","):
             stats = SupportStats()
-            orig = _install_probe(stats)
+            blend = BlendStats()
+            orig, orig_blend = _install_probe(stats, blend)
             try:
                 attn_pi05.install_pladis(
                     model, pladis_scale=scale, method="entmax15", kind=kind,
@@ -154,14 +220,17 @@ def main() -> int:
                     run_episode(sess, spec, ts.init_states_of(spec.task_name), model,
                                 episode_seed=spec.episode, max_steps=520, exec_horizon=5)
                 stats.report(kind)
+                blend.report()
             finally:
                 attn_pi05._sparse = orig
+                attn_pi05._pladis_blend = orig_blend
         print()
 
     sess.close()
     print("NOTE: support size is λ-independent (entmax15 is applied to β*logits, and λ only "
-          "mixes the result with dense), so the per-λ rows above should agree — they are "
-          "repeated as a consistency check, not as a dose sweep.")
+          "mixes the result with dense), so the per-λ SUPPORT rows above should agree — they "
+          "are repeated as a consistency check, not as a dose sweep. The `negative w` rows "
+          "ARE λ-dependent: at λ>1 every dropped column lands at (1-λ)*dense < 0.")
     print("DIAGNOSTIC COMPLETE (measurement, not a gate)")
     return 0
 

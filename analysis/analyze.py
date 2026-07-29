@@ -76,17 +76,29 @@ MODELS = {
                             ("image", "base_dense"), ("base_dense", "vanilla")],
         "cat_contrasts": [("text", "image"), ("text", "base_dense"),
                           ("image", "base_dense")],
-        # phase 2 candidates; skipped until all four suite eplogs exist
-        "extra_arms": ["prefix", "all", "text15", "image15", "text20", "image20"],
+        # phase 2; each arm is skipped until all four of its suite eplogs exist, so the
+        # driver can be appended to while a campaign is running.
+        #
+        # The dose ladder carries its OWN control per λ (base_dense15 / base_dense20).
+        # base_dense's residual is `λ*ε` — the numeric term it exists to absorb scales
+        # with λ — so `text20 - base_dense` (the λ=1 control) would leave half of it
+        # uncontrolled. Every λ>0 arm is contrasted against the control AT ITS OWN λ.
+        "extra_arms": ["prefix", "all",
+                       "base_dense15", "text15", "image15",
+                       "base_dense20", "text20", "image20"],
         "extra_contrasts": [
             ("prefix", "text"), ("prefix", "image"), ("prefix", "vanilla"),
             ("all", "prefix"), ("all", "vanilla"),
-            ("text15", "vanilla"), ("text15", "text"),
-            ("image15", "vanilla"), ("image15", "image"),
+            # λ=1.5: locus pair, both baselines, and the dose step from λ=1
             ("text15", "image15"),
-            ("text20", "vanilla"), ("text20", "text15"),
-            ("image20", "vanilla"), ("image20", "image15"),
+            ("text15", "base_dense15"), ("text15", "vanilla"), ("text15", "text"),
+            ("image15", "base_dense15"), ("image15", "vanilla"), ("image15", "image"),
+            ("base_dense15", "vanilla"), ("base_dense15", "base_dense"),
+            # λ=2.0: same, stepping from λ=1.5
             ("text20", "image20"),
+            ("text20", "base_dense20"), ("text20", "vanilla"), ("text20", "text15"),
+            ("image20", "base_dense20"), ("image20", "vanilla"), ("image20", "image15"),
+            ("base_dense20", "vanilla"), ("base_dense20", "base_dense15"),
         ],
     },
 }
