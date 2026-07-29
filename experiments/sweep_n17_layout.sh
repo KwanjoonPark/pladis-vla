@@ -48,4 +48,12 @@ run statextext   --pladis-install --pladis-scale 1.0 --pladis-qgroup state  --pl
 run stateximage  --pladis-install --pladis-scale 1.0 --pladis-qgroup state  --pladis-kind image
 run allxall      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pladis-kind all
 
+# 2026-07-28 text-locus dose row (entmax), mirroring the language axis:
+# a-x-t lambda {1.5, 2.0} (lambda=1 exists above) + all-x-t lambda {1, 1.5, 2}.
+run actionxtext15 --pladis-install --pladis-scale 1.5 --pladis-qgroup action --pladis-kind text
+run actionxtext20 --pladis-install --pladis-scale 2.0 --pladis-qgroup action --pladis-kind text
+run allxtext      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pladis-kind text
+run allxtext15    --pladis-install --pladis-scale 1.5 --pladis-qgroup all    --pladis-kind text
+run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all    --pladis-kind text
+
 echo "[layout] ALL DONE $(date +%H:%M:%S)"

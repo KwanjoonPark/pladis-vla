@@ -47,7 +47,17 @@ def robot_level(task_name):
 
 AXES = {
     "layout": {"prefix": "n17_layout", "cat": layout_cat,
-               "cats": ["add", "level_sample", "moved_level"]},
+               "cats": ["add", "level_sample", "moved_level"],
+               # 07-28 text-locus dose row (entmax), mirroring language
+               "extra_arms": ["actionxtext15", "actionxtext20",
+                              "allxtext", "allxtext15", "allxtext20"],
+               "extra_contrasts": [
+                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
+                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
+                   ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
+                   ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
+                   ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
+               ]},
     "language": {"prefix": "n17_lang", "cat": None, "cats": [],
                  # extra arms are skipped until all four suite eplogs exist.
                  # 07-22 composition arms: allxtext = {action,state}xtext;
@@ -114,7 +124,17 @@ AXES = {
                      ("allxt-temp20l15", "axt-temp20l15"),
                  ]},
     "robot": {"prefix": "n17_robot", "cat": robot_level,
-              "cats": ["L1", "L2", "L3", "L4", "L5"]},
+              "cats": ["L1", "L2", "L3", "L4", "L5"],
+              # 07-28 text-locus dose row (entmax), mirroring language
+              "extra_arms": ["actionxtext15", "actionxtext20",
+                             "allxtext", "allxtext15", "allxtext20"],
+              "extra_contrasts": [
+                  ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
+                  ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
+                  ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
+                  ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
+                  ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
+              ]},
 }
 
 def load(prefix, arm):
