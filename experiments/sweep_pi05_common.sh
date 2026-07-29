@@ -57,7 +57,14 @@ run() {  # $1 = arm tag, rest = pladis flags
   local rc=$?
   tail -1 "results/sweep/${PREFIX}_${tag}_${SUITE}.out"
   # device provenance, appended as a sidecar line (NOT line 1 — eplog.py:73-80 only
-  # identity-checks line 1, so this cannot break resume after a reboot or a GPU swap)
-  [ -f "$out.arm" ] && echo "dev ${CUDA_VISIBLE_DEVICES} $(nvidia-smi --id=0 --query-gpu=name,uuid --format=csv,noheader 2>/dev/null)" >> "$out.arm"
+  # identity-checks line 1, so this cannot break resume after a reboot or a GPU swap).
+  #
+  # `--id=$CUDA_VISIBLE_DEVICES`, NOT `--id=0`: nvidia-smi does NOT honour
+  # CUDA_VISIBLE_DEVICES, so `--id=0` queries PHYSICAL GPU 0 regardless of which device
+  # the run actually used. Fixed 2026-07-29 — every phase-1 arm recorded GPU 0's UUID
+  # while running on devices 4-7, i.e. the line was logging a device we never touched
+  # and the provenance it exists to provide was absent. Sidecars written before this
+  # date have a correct `dev <index>` and a meaningless UUID.
+  [ -f "$out.arm" ] && echo "dev ${CUDA_VISIBLE_DEVICES} $(nvidia-smi --id="${CUDA_VISIBLE_DEVICES}" --query-gpu=name,uuid --format=csv,noheader 2>/dev/null)" >> "$out.arm"
   return $rc
 }
