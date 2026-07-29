@@ -155,14 +155,25 @@ and the eager-dense arm exist to bracket a real kernel-level numeric difference
 
 So π0.5 *does* carry a numeric term, just not GR00T's: not a fused-vs-eager
 **kernel** difference, but the reassociation the λ>0 code path itself
-introduces. Phase 1 is therefore four arms — `vanilla`, `base_dense`, `text`,
-`image` at λ=1 — and each λ>0 arm is contrasted against both baselines, exactly
-as on n17. `text − vanilla` mixes locus with the numeric term; `text −
-base_dense` isolates it.
+introduces. It was measured once at sweep scale — `base_dense − vanilla` =
+**−0.91 pp** over 1,537 episodes, the same sign as in the 10-episode gate.
 
-This arm was written out of the design and then reinstated (2026-07-28) by the
-measurement intended to retire it. The `if it turns out to matter, the arm goes
-back in` clause is the reason check (c) exists rather than being assumed away.
+**Reporting reference: vanilla** (operator decision, 2026-07-29). The λ=1
+`base_dense` eplogs are kept and reported as an extra arm — they are the one
+direct measurement of the term's size — but the ladder arms (λ=1.5, 2.0) do not
+carry their own control. Read the two contrast families accordingly:
+
+- `text − vanilla`, `image − vanilla` carry the numeric term **alongside** the
+  intervention, so they understate a beneficial locus effect. At λ=1 that gap is
+  visible: `text − vanilla` = +0.33 pp against `text − base_dense` = +1.24 pp.
+- **`text − image` is unaffected** — both arms run the identical λ>0 path, so the
+  term cancels *within* the pair. This is the study's primary contrast (§6.3),
+  and it is the one that survives Bonferroni.
+
+The eager-dense arm was written out of the design, reinstated (2026-07-28) by
+the measurement intended to retire it, then demoted back to a reference
+measurement once its size was known. The `if it turns out to matter, the arm
+goes back in` clause is why check (c) measures rather than assumes.
 
 ## 2. Benchmark and protocol
 
@@ -354,9 +365,10 @@ machine or after dependency changes, run in order:
    its block below zero against `text`'s 6.5 %, because `image` has 512
    attendable columns of which ~8 survive, while `text`'s ~185 masked columns
    carry `dense ≈ 0` and so contribute ~0 when negated. **At λ>1 the
-   `text − image` contrast therefore carries a term λ=1 did not have**, and the
-   per-λ `base_dense` does not absorb it (that arm never sparsifies, so it has
-   no negative lobe at all).
+   `text − image` contrast therefore carries a term λ=1 did not have** — and no
+   dense control can absorb it, since an arm that never sparsifies has no
+   negative lobe to match. It is a property of the pair, to be weighed when the
+   ladder's locus contrasts are read.
 
    For `prefix` the result inverts the hypothesis. The question was whether
    image's 768 columns crowd language's 200 out; instead language survives
@@ -493,40 +505,43 @@ over `success_once`, reported per contrast with discordant counts. Pooled
 contrasts are primary; single-suite contrasts are interpreted conservatively
 (closed-loop rollouts amplify numeric noise at the single-suite scale — §7).
 `analyze.py` prints a Bonferroni-adjusted p over the pooled contrast family
-and marks which contrasts survive it. On **both** tracks each λ>0 arm is
-contrasted against **both** baselines — vanilla and the eager-dense control —
-because both tracks carry a numeric-path term, though for different reasons
-(§1.4, §7). The primary contrast per track is the **locus** pair:
-`actionxtext − actionximage` for n17, `text − image` for π0.5.
+and marks which contrasts survive it. The reference arm is **vanilla** on both
+tracks. n17 additionally contrasts each λ>0 arm against the eager-dense control,
+because there the numeric term is a fused-vs-eager *kernel* difference; on π0.5
+that control is a reference measurement rather than a per-arm baseline (§1.4).
+The primary contrast per track is the **locus** pair — `actionxtext −
+actionximage` for n17, `text − image` for π0.5 — and it is the contrast the
+numeric term cannot reach, since both arms of the pair run the identical path.
 
-**π0.5 language axis, λ=1 (phase 1 complete, 2026-07-29).** 4 arms × 1,537
-curated variants, seed-0 schedule, paired.
+**π0.5 language axis, λ=1 (phase 1 complete, 2026-07-29).** 1,537 curated
+variants per arm, seed-0 schedule, paired.
 
 | arm | pooled | 10 | goal | object | spatial |
 |---|---|---|---|---|---|
-| `vanilla` | 87.12 | 89.0 | 72.0 | 92.4 | 96.4 |
-| `base_dense` | 86.21 | 86.9 | 71.5 | 91.8 | 95.9 |
+| `vanilla` (reference) | 87.12 | 89.0 | 72.0 | 92.4 | 96.4 |
 | **`text`** | **87.44** | 89.8 | 71.2 | 92.4 | 97.7 |
 | `image` | 85.82 | 88.8 | 69.5 | 91.2 | 95.1 |
+| `base_dense` *(numeric-term reference)* | 86.21 | 86.9 | 71.5 | 91.8 | 95.9 |
 
 | contrast | Δ | discordant | z | p | p<sub>bonf</sub> |
 |---|---|---|---|---|---|
 | **`text − image`** | **+1.63 pp** | 57 : 32 | +2.65 | 0.0080 | **0.048 ✱** |
-| `text − base_dense` | +1.24 pp | 46 : 27 | +2.22 | 0.026 | 0.157 |
 | `text − vanilla` | +0.33 pp | 38 : 33 | +0.59 | 0.553 | 1 |
-| `image − base_dense` | −0.39 pp | 48 : 54 | −0.59 | 0.553 | 1 |
 | `image − vanilla` | −1.30 pp | 39 : 59 | −2.02 | 0.043 | 0.260 |
 | `base_dense − vanilla` | −0.91 pp | 24 : 38 | −1.78 | 0.075 | 0.452 |
+| `text − base_dense` | +1.24 pp | 46 : 27 | +2.22 | 0.026 | 0.157 |
+| `image − base_dense` | −0.39 pp | 48 : 54 | −0.59 | 0.553 | 1 |
 
 The locus contrast is the only one of six to survive Bonferroni. Both arms run
 the identical operation at the identical λ with the same mass preservation —
-they differ *only* in which modality's keys are sharpened.
+they differ *only* in which modality's keys are sharpened, which is also why
+this is the contrast the numeric term of §1.4 cannot reach.
 
-**The eager-dense arm changed the reading.** `text − vanilla` is +0.33 pp,
-i.e. against vanilla alone the intervention looks inert. But `base_dense` sits
-0.91 pp *below* vanilla — the numeric term §1.4 predicted, same sign at 1,537
-episodes as in the 10-episode gate — so once it is controlled for, `text` is
-+1.24 pp. The arm the design had written out is what makes the effect legible.
+**How much the reference choice moves the reading.** Against vanilla the
+intervention looks inert: `text − vanilla` = +0.33 pp. `base_dense` sits 0.91 pp
+*below* vanilla, so measured against that path instead, `text` is +1.24 pp. The
+two numbers bracket the same effect; the locus contrast avoids the question
+entirely by cancelling the term within the pair.
 
 Note also the severity spread on the baseline itself: language perturbation
 costs libero_goal **−24.7 pp** against its task-matched original, versus −2.5

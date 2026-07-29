@@ -134,27 +134,31 @@ run image --video-dir "results/sweep/videos/${PREFIX}_image_${SUITE}" \
 #     per-λ base_dense does NOT absorb it (base_dense never sparsifies, so it has no
 #     negative lobe at all). Interpret the λ>1 locus contrasts with that in mind.
 #
-# base_dense IS REPEATED PER λ, and that is not redundancy. Its blend is
-# `w = dense + λ*(m*p - dense[sub])`; the bracket is algebraically zero but numerically
-# ε, so the residual scales as λ*ε — the very term this arm exists to absorb GROWS with
-# λ. At λ=1 it was already worth -0.91pp (base_dense - vanilla). Contrasting a λ=2 arm
-# against the λ=1 control would leave half of it uncontrolled.
 # ---------------------------------------------------------------------------------
+# NO per-λ eager-dense control. Operator decision 2026-07-29: vanilla is the reference
+# the study reports against, so the ladder carries the locus pair only.
+#
+# What this costs, stated plainly so the λ>1 numbers are read correctly: the λ>0 branch
+# introduces float32 reassociation that vanilla does not run, and at λ=1 that term was
+# worth -0.91pp (base_dense - vanilla, 1,537 eps). It scales as λ·ε, so it is LARGER at
+# λ=1.5/2.0 and is now uncontrolled. Consequence: `text15 - vanilla` and `text20 -
+# vanilla` mix the intervention with that term and understate a beneficial locus effect.
+# The contrast that stays clean is the LOCUS PAIR `text15 - image15` / `text20 - image20`
+# — both arms run the identical λ>0 path, so the numeric term cancels within the pair.
+# That pair is the study's primary contrast anyway (README §6.3).
+#
+# The λ=1 base_dense eplogs (4 suites × 1,537 eps, already collected) are NOT deleted;
+# they remain the one direct measurement of the term's size, reported as an extra arm.
+#
 # Videos on every ladder arm, for the same reason the λ=1 arms record them — and more so
 # here: λ>1 is where the negative lobe appears, so "HOW does it fail" is exactly the
 # question the ladder raises. --video-dir is NOT part of the arm signature
 # (eval_arm.py), so adding it to an arm already in progress does not break resume.
-run base_dense15 --video-dir "results/sweep/videos/${PREFIX}_base_dense15_${SUITE}" \
-          --pladis-install --pladis-scale 1.5 --pladis-method softmax \
-          --pladis-beta 1.0 --pladis-kind text
 run text15  --video-dir "results/sweep/videos/${PREFIX}_text15_${SUITE}" \
           --pladis-install --pladis-scale 1.5 --pladis-kind text
 run image15 --video-dir "results/sweep/videos/${PREFIX}_image15_${SUITE}" \
           --pladis-install --pladis-scale 1.5 --pladis-kind image
 
-run base_dense20 --video-dir "results/sweep/videos/${PREFIX}_base_dense20_${SUITE}" \
-          --pladis-install --pladis-scale 2.0 --pladis-method softmax \
-          --pladis-beta 1.0 --pladis-kind text
 run text20  --video-dir "results/sweep/videos/${PREFIX}_text20_${SUITE}" \
           --pladis-install --pladis-scale 2.0 --pladis-kind text
 run image20 --video-dir "results/sweep/videos/${PREFIX}_image20_${SUITE}" \

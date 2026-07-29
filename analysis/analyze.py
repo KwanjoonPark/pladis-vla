@@ -48,57 +48,53 @@ MODELS = {
         "cat_contrasts": [("actionxtext", "actionximage"), ("actionxtext", "base0"),
                           ("actionximage", "base0")],
     },
-    # pi0.5 phase 1: 4 arms. base0 is NOT an arm here — it is bit-identical to vanilla
-    # (verify_pi05_hook.py gate A, re-confirmed end-to-end by verify_pi05_parity.py check
-    # (b)) and would burn 1,537 episodes re-proving a 10-episode assertion; the same call
-    # sweep_n17_robot.sh:9-12 made for the n17 robot axis.
+    # pi0.5: VANILLA IS THE REFERENCE (operator decision 2026-07-29). base0 is not an arm
+    # — it is bit-identical to vanilla (verify_pi05_hook.py gate A, re-confirmed
+    # end-to-end by verify_pi05_parity.py check (b)) and would burn 1,537 episodes
+    # re-proving a 10-episode assertion; the same call sweep_n17_robot.sh:9-12 made for
+    # the n17 robot axis.
     #
-    # base_dense IS an arm (added 2026-07-28). The earlier reasoning here — "pi0.5's
-    # vanilla is already on the eager path, so vanilla IS the numeric control" — was
-    # refuted by the measurement meant to confirm it: verify_pi05_parity.py check (c)
-    # found 0.0000% of bf16 attention elements differing at module level, yet dense
-    # diverged from vanilla in ALL 10 rollout episodes (SR 0.900 -> 1.000). The residual
-    # is float32 reassociation inside the λ>0 branch, below bf16 resolution per call and
-    # amplified by ~45k closed-loop attention calls per episode. So each λ>0 arm is
-    # contrasted against BOTH baselines, as on the n17 track: `text - vanilla` mixes
-    # locus with that numeric term, `text - base_dense` isolates it.
+    # base_dense is demoted to an EXTRA arm rather than removed, because its λ=1 eplogs
+    # (4 suites × 1,537 eps) are already collected and are the only direct measurement of
+    # the λ>0 numeric term. What they measured: verify_pi05_parity.py check (c) found
+    # 0.0000% of bf16 attention elements differing at module level, yet dense diverged
+    # from vanilla in ALL 10 rollout episodes, and at sweep scale base_dense landed
+    # -0.91pp below vanilla — float32 reassociation inside the λ>0 branch, below bf16
+    # resolution per call and amplified by ~45k closed-loop attention calls per episode.
+    #
+    # Consequence for how the primary contrasts read: `text - vanilla` and
+    # `image - vanilla` carry that term alongside the intervention, so a beneficial locus
+    # effect is understated there (at λ=1, text - vanilla was +0.33pp against
+    # text - base_dense +1.24pp). The LOCUS PAIR is unaffected — both arms run the
+    # identical λ>0 path, so the term cancels within the pair — which is why
+    # `text - image` is the primary contrast.
     "pi05": {
         "tag": "pi05",
-        "arms": ["vanilla", "base_dense", "text", "image"],
+        "arms": ["vanilla", "text", "image"],
         "key_contrasts": [
             ("text", "image"),                        # THE locus contrast
-            ("text", "base_dense"), ("text", "vanilla"),
-            ("image", "base_dense"), ("image", "vanilla"),
-            ("base_dense", "vanilla"),                # size of the numeric term itself
+            ("text", "vanilla"), ("image", "vanilla"),
         ],
         "locus_pair": ("text", "image"),
-        "suite_contrasts": [("text", "image"), ("text", "base_dense"),
-                            ("image", "base_dense"), ("base_dense", "vanilla")],
-        "cat_contrasts": [("text", "image"), ("text", "base_dense"),
-                          ("image", "base_dense")],
-        # phase 2; each arm is skipped until all four of its suite eplogs exist, so the
-        # driver can be appended to while a campaign is running.
-        #
-        # The dose ladder carries its OWN control per λ (base_dense15 / base_dense20).
-        # base_dense's residual is `λ*ε` — the numeric term it exists to absorb scales
-        # with λ — so `text20 - base_dense` (the λ=1 control) would leave half of it
-        # uncontrolled. Every λ>0 arm is contrasted against the control AT ITS OWN λ.
-        "extra_arms": ["prefix", "all",
-                       "base_dense15", "text15", "image15",
-                       "base_dense20", "text20", "image20"],
+        "suite_contrasts": [("text", "image"), ("text", "vanilla"), ("image", "vanilla")],
+        "cat_contrasts": [("text", "image")],
+        # Extra arms are skipped until all four of their suite eplogs exist, so the driver
+        # can be appended to while a campaign is running.
+        "extra_arms": ["base_dense", "prefix", "all",
+                       "text15", "image15", "text20", "image20"],
         "extra_contrasts": [
+            ("base_dense", "vanilla"),          # size of the λ>0 numeric term (λ=1)
+            ("text", "base_dense"), ("image", "base_dense"),
             ("prefix", "text"), ("prefix", "image"), ("prefix", "vanilla"),
             ("all", "prefix"), ("all", "vanilla"),
-            # λ=1.5: locus pair, both baselines, and the dose step from λ=1
+            # λ=1.5 — locus pair first, then vanilla and the dose step from λ=1
             ("text15", "image15"),
-            ("text15", "base_dense15"), ("text15", "vanilla"), ("text15", "text"),
-            ("image15", "base_dense15"), ("image15", "vanilla"), ("image15", "image"),
-            ("base_dense15", "vanilla"), ("base_dense15", "base_dense"),
-            # λ=2.0: same, stepping from λ=1.5
+            ("text15", "vanilla"), ("image15", "vanilla"),
+            ("text15", "text"), ("image15", "image"),
+            # λ=2.0 — same, stepping from λ=1.5
             ("text20", "image20"),
-            ("text20", "base_dense20"), ("text20", "vanilla"), ("text20", "text15"),
-            ("image20", "base_dense20"), ("image20", "vanilla"), ("image20", "image15"),
-            ("base_dense20", "vanilla"), ("base_dense20", "base_dense15"),
+            ("text20", "vanilla"), ("image20", "vanilla"),
+            ("text20", "text15"), ("image20", "image15"),
         ],
     },
 }
