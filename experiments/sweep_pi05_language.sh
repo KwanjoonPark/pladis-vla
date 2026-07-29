@@ -140,14 +140,24 @@ run image --video-dir "results/sweep/videos/${PREFIX}_image_${SUITE}" \
 # λ. At λ=1 it was already worth -0.91pp (base_dense - vanilla). Contrasting a λ=2 arm
 # against the λ=1 control would leave half of it uncontrolled.
 # ---------------------------------------------------------------------------------
-run base_dense15 --pladis-install --pladis-scale 1.5 --pladis-method softmax \
+# Videos on every ladder arm, for the same reason the λ=1 arms record them — and more so
+# here: λ>1 is where the negative lobe appears, so "HOW does it fail" is exactly the
+# question the ladder raises. --video-dir is NOT part of the arm signature
+# (eval_arm.py), so adding it to an arm already in progress does not break resume.
+run base_dense15 --video-dir "results/sweep/videos/${PREFIX}_base_dense15_${SUITE}" \
+          --pladis-install --pladis-scale 1.5 --pladis-method softmax \
           --pladis-beta 1.0 --pladis-kind text
-run text15  --pladis-install --pladis-scale 1.5 --pladis-kind text
-run image15 --pladis-install --pladis-scale 1.5 --pladis-kind image
+run text15  --video-dir "results/sweep/videos/${PREFIX}_text15_${SUITE}" \
+          --pladis-install --pladis-scale 1.5 --pladis-kind text
+run image15 --video-dir "results/sweep/videos/${PREFIX}_image15_${SUITE}" \
+          --pladis-install --pladis-scale 1.5 --pladis-kind image
 
-run base_dense20 --pladis-install --pladis-scale 2.0 --pladis-method softmax \
+run base_dense20 --video-dir "results/sweep/videos/${PREFIX}_base_dense20_${SUITE}" \
+          --pladis-install --pladis-scale 2.0 --pladis-method softmax \
           --pladis-beta 1.0 --pladis-kind text
-run text20  --pladis-install --pladis-scale 2.0 --pladis-kind text
-run image20 --pladis-install --pladis-scale 2.0 --pladis-kind image
+run text20  --video-dir "results/sweep/videos/${PREFIX}_text20_${SUITE}" \
+          --pladis-install --pladis-scale 2.0 --pladis-kind text
+run image20 --video-dir "results/sweep/videos/${PREFIX}_image20_${SUITE}" \
+          --pladis-install --pladis-scale 2.0 --pladis-kind image
 
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"
