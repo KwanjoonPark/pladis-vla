@@ -259,9 +259,12 @@ actually keeps. Read it before choosing λ — an intervention that keeps 190 of
 - Untracked files inside external checkouts (LIBERO-plus assets, `.magick`,
   `*.egg-info`, venv dirs under RLinf) are build artifacts — expected, and
   ignored by the externals gates.
-- **A6000node-1** (π0.5 track, provisioned 2026-07-27): 8× RTX A6000 48 GB, but
-  GPUs 0–3 belong to another project — pass `CUDA_VISIBLE_DEVICES` from {4,5,6,7}
-  on every driver. No `curl`, no `git-lfs`, no `uv`, and no system Python 3.11:
+- **A6000node-1** (π0.5 track, provisioned 2026-07-27): 8× RTX A6000 48 GB, all
+  available to this project (2026-07-30; an earlier note reserved 0–3 for
+  another group, which was temporary). `CUDA_VISIBLE_DEVICES` is still mandatory
+  on every driver — it is the suite→device pin of §0, not a permission check —
+  and the box is shared, so check `nvidia-smi` for a neighbour's process before
+  claiming a device. No `curl`, no `git-lfs`, no `uv`, and no system Python 3.11:
   `uv` came from `pip install uv` into the conda base, and ImageMagick from
   conda-forge (§3). π0.5 at bf16 uses ~36 GB with the 968-token prefix, so one
   process per GPU.

@@ -19,7 +19,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 . experiments/load_machine_env.sh
 
 SUITE="${1:?usage: $0 <libero_10|libero_goal|libero_object|libero_spatial>}"
-: "${CUDA_VISIBLE_DEVICES:?set CUDA_VISIBLE_DEVICES — GPUs 0-3 belong to another project}"
+: "${CUDA_VISIBLE_DEVICES:?set CUDA_VISIBLE_DEVICES — it pins this suite to one device for the whole campaign (docs/SETUP.md §0)}"
 
 # openpi's own LIBERO protocol: per-suite step caps (standalone libero_eval.py:88-99,
 # "longest training demo has N steps"), 10-step decoded chunk with the first 5 executed.
