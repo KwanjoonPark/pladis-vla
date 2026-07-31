@@ -99,6 +99,12 @@ def parse_args():
                    help="sparse-branch inverse temperature: sparse = method(beta*logits). "
                         "With --pladis-method softmax and beta>1 this is the paper's "
                         "S G.1 temperature-sharpened softmax control (tau = 1/beta)")
+    p.add_argument("--pladis-sparse-backend", default="entmax",
+                   choices=["entmax", "adasplash"],
+                   help="pi05 only: implementation of the sparse transform. `entmax` is "
+                        "exact/sorting-based (default, reproduces existing eplogs); "
+                        "`adasplash` is the Triton kernel — identical support, ~5x faster "
+                        "at this hook's shapes. Recorded in the arm signature")
     p.add_argument("--pladis-n-state-tokens", type=int, default=1,
                    help="gr00t_n17 only: leading state query rows; splits the "
                         "[state; action] sequence for --pladis-qgroup (N1.7: 1)")
@@ -217,11 +223,21 @@ def main():
         # The geometry belongs in the signature: WHICH key sub-block gets sharpened is
         # the experiment, so an eplog produced with a wrong n_lang must not resume into
         # a correct one. No qgroup/cells/ns here — they do not exist for pi0.5.
+        # The sparse backend is APPENDED ONLY WHEN NON-DEFAULT. adasplash and entmax 1.3
+        # keep identical support (verified at all three block widths; see attn_pi05.py),
+        # but they are still different kernels, so an arm must not silently mix them —
+        # hence it belongs in the signature. Emitting nothing for the default keeps every
+        # signature written before 2026-07-31 byte-identical, so the 12,296 episodes of
+        # the language campaign still resume (harness/eplog.py:62-80 aborts on any change).
+        backend_clause = (
+            "" if args.pladis_sparse_backend == "entmax"
+            else f",be{args.pladis_sparse_backend}"
+        )
         pladis_clause = (
             f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
             f"b{args.pladis_beta:g},k{args.pladis_kind},"
             f"ni{args.pladis_n_img_prefix},nl{args.pladis_n_lang},"
-            f"msq{args.pladis_max_suffix_query}"
+            f"msq{args.pladis_max_suffix_query}{backend_clause}"
         )
     else:
         pladis_clause = (
@@ -290,6 +306,7 @@ def main():
                 n_img_prefix=args.pladis_n_img_prefix,
                 n_lang=args.pladis_n_lang,
                 max_suffix_query=args.pladis_max_suffix_query,
+                sparse_backend=args.pladis_sparse_backend,
             )
         else:
             print("[arm] vanilla (no hook)", flush=True)

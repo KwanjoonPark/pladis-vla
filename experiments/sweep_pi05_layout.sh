@@ -45,10 +45,17 @@ AXIS=layout
 EPISODES=0        # 0 = every curated variant exactly once
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/sweep_pi05_common.sh"
 
+# The Triton entmax backend (deep-spin/adasplash) — ~5x faster than entmax 1.3 at this
+# hook's shapes, with elementwise-identical support (verify_pi05_hook.py gate G checks
+# exactly that at widths 200/768/968 before any arm runs). Safe to adopt on a NEW axis:
+# the language campaign's 12,296 episodes were collected on `entmax` and stay on it,
+# because the backend is part of the arm signature and this axis shares no eplog with it.
+BACKEND="--pladis-sparse-backend adasplash"
+
 run vanilla --video-dir "results/sweep/videos/${PREFIX}_vanilla_${SUITE}"
 run text  --video-dir "results/sweep/videos/${PREFIX}_text_${SUITE}" \
-          --pladis-install --pladis-scale 1.0 --pladis-kind text
+          --pladis-install --pladis-scale 1.0 --pladis-kind text $BACKEND
 run image --video-dir "results/sweep/videos/${PREFIX}_image_${SUITE}" \
-          --pladis-install --pladis-scale 1.0 --pladis-kind image
+          --pladis-install --pladis-scale 1.0 --pladis-kind image $BACKEND
 
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

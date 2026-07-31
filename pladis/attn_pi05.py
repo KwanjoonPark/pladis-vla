@@ -58,6 +58,30 @@ except Exception as exc:  # pragma: no cover - surfaced only if entmax missing
         "PLADIS needs the `entmax` package (pip install entmax) for the sparse branch."
     ) from exc
 
+# Optional Triton backend for the sparse branch (deep-spin/adasplash). entmax 1.3's
+# transforms are exact but sorting-based; adasplash solves the same threshold with a
+# Triton kernel and is ~5x faster at THIS hook's shapes ([1,8,10,{200,768,968}] fp32:
+# 423us -> 84us, measured 2026-07-30 on an A6000).
+#
+# Substituting it is only legitimate because the SUPPORT is identical — which columns
+# survive is the identity of the intervention, and a backend that kept a different set
+# would be a different arm wearing the same flags. Verified at all three block widths:
+# support sets equal elementwise, max|dp| 6.6e-07..1.7e-06 (fp32 rounding). The gate
+# `verify_pi05_hook.py` re-checks this on the machine; `--pladis-sparse-backend` selects
+# it, defaulting to `entmax` so previously collected arms remain byte-reproducible.
+#
+# NOTE this is the entmax FUNCTION, not adasplash's flash-attention path. That path
+# cannot serve this hook: PLADIS blends `dense + λ(m·p − dense)`, so it needs the dense
+# map materialized, which is exactly what flash attention refuses to produce.
+try:
+    from adasplash import triton_entmax15, triton_sparsemax
+    _HAVE_ADASPLASH = True
+except Exception:  # pragma: no cover - optional dependency
+    triton_entmax15 = triton_sparsemax = None
+    _HAVE_ADASPLASH = False
+
+_VALID_BACKENDS = ("entmax", "adasplash")
+
 _VALID_METHODS = ("entmax15", "sparsemax", "softmax")
 # text/image/prefix are single-block, mass-preserving sharpenings — the shape of the
 # operation the official FLUX code performs (PLADIS/pipeline/pipeline_flux.py:104-113
@@ -81,6 +105,10 @@ class _Cfg:
 
     scale: float = 0.0          # λ; 0 == vanilla (stock softmax, parity)
     method: str = "entmax15"    # entmax15 | sparsemax | softmax (softmax == eager-dense control)
+    # Which implementation computes `method`. Identical support either way (see the
+    # adasplash import note); `entmax` stays the default so an arm re-run without the
+    # flag reproduces earlier eplogs exactly.
+    sparse_backend: str = "entmax"   # entmax | adasplash
     beta: float = 1.0           # inverse temperature on the SPARSE branch ONLY
     kind: str = "text"          # all | text | image  (which key modality sub-block to sparsify)
     # ALLOCATED block widths — the slice bounds. The ATTENDABLE widths are smaller, because
@@ -115,6 +143,14 @@ CFG = _Cfg()
 
 
 def _sparse(z: torch.Tensor, method: str) -> torch.Tensor:
+    # adasplash's kernels act on the LAST dim (no `dim` argument) — which is the axis we
+    # slice on anyway, so no permute is needed. CPU tensors have no Triton kernel, so the
+    # CPU gates fall back to entmax regardless of the selected backend.
+    if CFG.sparse_backend == "adasplash" and z.is_cuda:
+        if method == "sparsemax":
+            return triton_sparsemax(z)
+        if method == "entmax15":
+            return triton_entmax15(z)
     if method == "sparsemax":
         return sparsemax(z, dim=-1)
     if method == "entmax15":
@@ -245,6 +281,7 @@ def install_pladis(
     n_lang: Optional[int] = None,
     max_suffix_query: int = 100,
     qgroup: str = "all",
+    sparse_backend: str = "entmax",
 ) -> str:
     """Install the PLADIS blend on the π0.5 Gemma-expert eager attention (explicit-flag entry).
 
@@ -260,6 +297,18 @@ def install_pladis(
         raise ValueError(f"method must be one of {_VALID_METHODS}, got {method!r}")
     if kind not in _VALID_KINDS:
         raise ValueError(f"kind must be one of {_VALID_KINDS}, got {kind!r}")
+    if sparse_backend not in _VALID_BACKENDS:
+        raise ValueError(
+            f"sparse_backend must be one of {_VALID_BACKENDS}, got {sparse_backend!r}"
+        )
+    if sparse_backend == "adasplash" and not _HAVE_ADASPLASH:
+        # Refuse rather than fall back: a silent fallback would log `adasplash` in the
+        # arm signature while running entmax, so the sidecar would misdescribe the run.
+        raise RuntimeError(
+            "sparse_backend='adasplash' requested but the package is not importable "
+            "(pip install adasplash). Refusing to fall back silently — the .arm sidecar "
+            "would then name a backend that did not run."
+        )
     if qgroup == "state":
         raise ValueError(
             "qgroup='state' is invalid for π0.5: its suffix is action-only (state is embedded as "
@@ -276,6 +325,7 @@ def install_pladis(
     CFG.n_img_prefix = ni
     CFG.n_lang = nl
     CFG.max_suffix_query = int(max_suffix_query)
+    CFG.sparse_backend = sparse_backend
     CFG.n_calls = 0
     CFG.seen_shapes = set()
 
@@ -307,7 +357,8 @@ def install_pladis(
     msg = (
         f"[PLADIS-pi05] installed scale={CFG.scale} method={CFG.method} beta={CFG.beta} "
         f"kind={CFG.kind} n_img={CFG.n_img_prefix} n_lang={CFG.n_lang} "
-        f"max_suffix_query={CFG.max_suffix_query} eager={eager}"
+        f"max_suffix_query={CFG.max_suffix_query} backend={CFG.sparse_backend} "
+        f"eager={eager}"
     )
     print(msg, flush=True)
     print(msg, file=sys.stderr, flush=True)  # survives SIGTERM before the stdout buffer flushes

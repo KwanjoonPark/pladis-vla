@@ -547,6 +547,51 @@ Note also the severity spread on the baseline itself: language perturbation
 costs libero_goal **−24.7 pp** against its task-matched original, versus −2.5
 to −7.6 pp elsewhere. Pooled numbers average over a very uneven axis.
 
+**λ dose ladder (complete, 2026-07-31).** All 8 arms × 4 suites = 12,296
+episodes. λ ∈ {1.0, 1.5, 2.0} over the locus pair.
+
+| arm | λ=1.0 | λ=1.5 | λ=2.0 |
+|---|---|---|---|
+| `text…` | 87.44 | 87.51 | 87.57 |
+| `image…` | 85.82 | **84.84** | 85.04 |
+| locus Δ | +1.63 | **+2.67 ✱** | **+2.54 ✱** |
+
+| contrast | Δ | discordant | z | p | p<sub>bonf</sub> |
+|---|---|---|---|---|---|
+| **`text15 − image15`** | +2.67 pp | 70 : 29 | +4.12 | 3.8e−05 | **0.0006 ✱** |
+| **`text20 − image20`** | +2.54 pp | 77 : 38 | +3.64 | 2.8e−04 | **0.0044 ✱** |
+| **`image15 − vanilla`** | −2.28 pp | 36 : 71 | −3.38 | 7.2e−04 | **0.0115 ✱** |
+| **`image20 − vanilla`** | −2.08 pp | 40 : 72 | −3.02 | 0.0025 | **0.0400 ✱** |
+| `text15 − vanilla` | +0.39 pp | 38 : 32 | +0.72 | 0.473 | 1 |
+| `text20 − vanilla` | +0.46 pp | 44 : 37 | +0.78 | 0.437 | 1 |
+| `text15 − text` | +0.07 pp | 31 : 30 | +0.13 | 0.898 | 1 |
+| `text20 − text15` | +0.07 pp | 35 : 34 | +0.12 | 0.904 | 1 |
+
+**Read the direction, not just the significance.** The locus contrast is the
+strongest signal in the campaign (z = +4.12), but it is not driven by `text`.
+The `text` arm does not move with λ at all — 87.44 → 87.51 → 87.57, with every
+step and every comparison against vanilla at p > 0.43. Of the four contrasts
+that survive Bonferroni, **three are `image` getting worse and none is `text`
+getting better**.
+
+So the honest statement is *"sharpening the image keys hurts, and hurts more as
+λ rises"*, not *"sharpening the language keys helps"*. Locus matters — but
+asymmetrically, and the effect lives on the arm this repo included as the
+contrast rather than the one motivated by the FLUX port.
+
+**The λ>1 gap is partly mechanical.** §5 gate 5c measured the negative lobe:
+at λ>1, `image` puts 66 % of its block below zero (negative mass 0.0710 at
+λ=1.5) against `text`'s 6.5 % (0.0206). λ=1.0 is the only rung where both arms
+carry *zero* negative weight, and it is also the rung where the locus contrast
+is weakest (+1.63 pp, not surviving Bonferroni). That ordering is what a
+negative-lobe explanation predicts, so the ladder's widening contrast should not
+be read as a purely dose-dependent locus effect.
+
+The layout axis (`sweep_pi05_layout.sh`) is the discriminating test: it perturbs
+the *scene* and leaves the instruction intact, reversing which modality carries
+the story. A locus effect that flips with the perturbed modality would be much
+stronger evidence than either axis alone.
+
 ## 7. Determinism and numerical-path conventions
 
 **Determinism.** Three seeding layers make runs bit-reproducible on a fixed
