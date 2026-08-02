@@ -43,8 +43,11 @@ PINS = {
     # correctly-built venv. jax/orbax are pinned because openpi imports jax even on
     # the PyTorch path and orbax 0.11.13 breaks on jax>=0.7
     # (RLinf/requirements/embodied/models/openpi.txt).
+    # adasplash 0.2.2: the Triton entmax backend (editable install from $WS/adasplash;
+    # the checkout SHA in externals.lock is the real pin, checked by check A — this
+    # version entry only catches the venv silently swapping to a PyPI wheel).
     "openpi": {"torch": "2.7.1", "transformers": "4.53.2", "entmax": "1.3",
-               "jax": "0.5.3", "orbax-checkpoint": "0.11.13"},
+               "jax": "0.5.3", "orbax-checkpoint": "0.11.13", "adasplash": "0.2.2"},
 }
 
 # openpi's transformers_replace tree: files it copies over site-packages/transformers.

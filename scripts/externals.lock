@@ -20,3 +20,10 @@ openpi	$WS/openpi	https://github.com/RLinf/openpi.git	c5dc4b9296a1a4739bf52828f2
 # pipeline_sdxl.py:93-99 + :1214-1215 (the whole-map blend and the lambda=0 gating
 # attn_gr00t_n17.py implements). verify_pi05_hook.py gate B asserts against it.
 pladis	$WS/PLADIS	https://github.com/cubeyoung/PLADIS.git	248b9d15701c08094c47dc90b4ae24afbf5cf7a9
+# adasplash: Triton entmax backend for pladis/attn_pi05.py's sparse branch
+# (--pladis-sparse-backend adasplash; layout and robot campaigns run on it). Installed
+# EDITABLE into the openpi venv (`uv pip install --no-deps -e $WS/adasplash`), so the
+# checkout SHA — not a wheel version — is what determines the kernel that produced the
+# results. verify_pi05_hook.py gate G asserts support-equality against entmax 1.3 at the
+# real block widths on every gate run.
+adasplash	$WS/adasplash	https://github.com/deep-spin/adasplash.git	4b64c94fa4cd60d274dafff3178bb96d2f831edb

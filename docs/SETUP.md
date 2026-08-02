@@ -104,6 +104,9 @@ UV_PROJECT_ENVIRONMENT=$WS/venvs/openpi uv sync --frozen --no-dev   # in $WS/ope
 cp -r $WS/openpi/src/openpi/models_pytorch/transformers_replace/* \
       $WS/venvs/openpi/lib/python3.11/site-packages/transformers/
 uv pip install --python $WS/venvs/openpi/bin/python entmax==1.3
+# Triton entmax backend (--pladis-sparse-backend adasplash) — editable from the
+# lock-pinned checkout, NOT from PyPI: the checkout SHA is the reproducibility pin
+uv pip install --python $WS/venvs/openpi/bin/python --no-deps -e $WS/adasplash
 uv pip install --python $WS/venvs/openpi/bin/python --no-deps -e $WS/LIBERO-plus
 # LIBERO-plus's own deps, added by hand because --no-deps skips them (see below)
 uv pip install --python $WS/venvs/openpi/bin/python \
