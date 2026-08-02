@@ -261,6 +261,46 @@ class LiberoPlusSession:
         namespace["plasma_fractal"]._np_compat = True
         ew.plasma_fractal = namespace["plasma_fractal"]
 
+        # PERFORMANCE rebind, bit-exact (glass family, N 41-50): the fork's
+        # glass_blur shuffles pixels in a pure-Python triple loop (~330ms per
+        # frame, on EVERY env step). Replacement draws the identical np.random
+        # stream in one batched call (batched randint == sequential draws,
+        # verified) and runs the loop under numba with the SAME cell semantics
+        # — note the original's tuple-"swap" on 3-channel VIEWS is actually a
+        # one-way copy (x[h,w] <- x[h',w'], neighbor unchanged), which the
+        # replica reproduces. Verified np.array_equal against the original at
+        # severities {1,5,9,10}; ~51x faster (6.5ms).
+        from numba import njit
+        from skimage.filters import gaussian as _sk_gaussian
+
+        @njit(cache=True)
+        def _glass_shuffle(img, deltas, d, iters):
+            k = 0
+            for _ in range(iters):
+                for h in range(224 - d, d, -1):
+                    for w in range(224 - d, d, -1):
+                        dx = deltas[k, 0]
+                        dy = deltas[k, 1]
+                        k += 1
+                        hp = h + dy
+                        wp = w + dx
+                        for ch in range(img.shape[2]):
+                            img[h, w, ch] = img[hp, wp, ch]
+
+        glass_c = [(0.5, 1, 3), (0.7, 1, 3), (0.9, 2, 3), (1.0, 2, 2), (1.1, 3, 2),
+                   (1.3, 3, 2), (1.5, 4, 2), (1.8, 4, 2), (2.2, 5, 1), (2.5, 5, 1)]
+
+        def glass_blur(x, severity=1):
+            c = glass_c[severity - 1]
+            x = np.uint8(_sk_gaussian(np.array(x) / 255., sigma=c[0], channel_axis=-1) * 255)
+            d, iters = c[1], c[2]
+            deltas = np.random.randint(-d, d, size=(iters * (224 - 2 * d) ** 2, 2))
+            _glass_shuffle(x, deltas, d, iters)
+            return np.clip(_sk_gaussian(x / 255., sigma=c[0], channel_axis=-1), 0, 1) * 255
+
+        glass_blur._np_compat = True
+        ew.glass_blur = glass_blur
+
     def _load(self, bddl_path: str):
         from liberoplus.liberoplus.envs import OffScreenRenderEnv
 

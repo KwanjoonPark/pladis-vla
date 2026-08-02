@@ -106,7 +106,7 @@ def gate_B():
 def gate_C():
     ts = LiberoPlusTaskSet("libero_10", "noise")
     sched = ts.schedule(len(ts.task_names), seed=0)
-    for fam in ("motion", "fog"):  # the per-frame np.random consumers
+    for fam in ("motion", "fog", "glass"):  # the per-frame np.random consumers
         spec = next(s for s in sched if noise_n(s.task_name) in FAMILIES[fam])
         runs = []
         for _ in range(2):
