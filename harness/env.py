@@ -54,8 +54,21 @@ AXIS_TO_CATEGORY = {
     # part of the pose offset. Same base init states as axis=None -> scene
     # stays paired with the original arm. Gates: verify_robot_axis.py.
     "robot": "Robot Initial States",
-    # camera / noise runtime axes: supported by env_wrapper, not wired yet.
+    # noise is a runtime OBS-side axis: the curated name's `_noise_<N>` tail
+    # (N=1..50) makes env_wrapper corrupt the AGENTVIEW image only (wrist
+    # untouched, scene untouched -> stays paired with the original arm) on
+    # every step and reset: N 1-10 motion blur, 11-20 gaussian blur, 21-30
+    # zoom blur, 31-40 fog, 41-50 glass blur (severity = N within decade,
+    # env_wrapper.py:283-305). motion/fog/glass draw from GLOBAL np.random
+    # per frame -> determinism and arm pairing come from the per-episode
+    # np reseed in LiberoPlusSession.reset. Gates: verify_noise_axis.py.
+    "noise": "Sensor Noise",
+    # camera runtime axis: supported by env_wrapper, not wired yet.
 }
+
+# Axes needing the per-episode np reseed at reset (corruption draws + fixture
+# placement determinism); see LiberoPlusSession.per_episode_np_seed.
+RUNTIME_RNG_AXES = frozenset({"noise"})
 
 # Axes whose BDDL changes the scene itself (moved regions / added objects):
 # base-task init states must NOT be applied (see module docstring). The
@@ -188,16 +201,70 @@ class LiberoPlusSession:
     SETTLE_STEPS = 10
     NOOP = np.array([0, 0, 0, 0, 0, 0, -1.0], dtype=np.float32)
 
-    def __init__(self, camera_height: int = 256, camera_width: int = 256, seed: int = 0):
+    def __init__(self, camera_height: int = 256, camera_width: int = 256, seed: int = 0,
+                 per_episode_np_seed: bool = False):
         self.camera_height = camera_height
         self.camera_width = camera_width
         self.seed = seed
+        # noise axis only (RUNTIME_RNG_AXES): pins the per-frame corruption
+        # draws AND makes reset-time fixture placement resume-proof. Kept OFF
+        # for the historical axes — their fixture draws come from the process-
+        # cumulative np stream, and completed campaigns were recorded under
+        # that regime (regression-gated: 2-ep language eplog bit-compare).
+        self.per_episode_np_seed = per_episode_np_seed
         self._env = None
         self._loaded_bddl = None
+
+    @staticmethod
+    def _patch_motion_blur_numpy_compat():
+        """LIBERO-plus env_wrapper.motion_blur calls np.fromstring, whose
+        binary mode is removed in numpy>=1.24 -> every motion-family noise
+        episode (N 1-10) crashes at the first corrupted frame. Re-bind the
+        module function with a line-for-line copy (env_wrapper.py:30-57)
+        whose only change is np.frombuffer, keeping the PINNED benchmark
+        checkout pristine (scripts/externals.lock). np.random draw count is
+        unchanged (one uniform per frame), so pairing semantics hold."""
+        from liberoplus.liberoplus.envs import env_wrapper as ew
+
+        if getattr(ew.motion_blur, "_np_compat", False):
+            return
+        import cv2
+        from io import BytesIO
+
+        motion_image = ew.MotionImage
+        c_table = [(5, 2), (8, 3), (10, 4), (12, 5), (15, 6),
+                   (18, 8), (20, 10), (25, 12), (30, 15), (35, 20)]
+
+        def motion_blur(x, severity=1):
+            c = c_table[severity - 1]
+            output = BytesIO()
+            x.save(output, format="PNG")
+            x = motion_image(blob=output.getvalue())
+            x.motion_blur(radius=c[0], sigma=c[1], angle=np.random.uniform(-45, 45))
+            x = cv2.imdecode(np.frombuffer(x.make_blob(), np.uint8), cv2.IMREAD_UNCHANGED)
+            if x.shape != (224, 224):
+                return np.clip(x[..., [2, 1, 0]], 0, 255)  # BGR to RGB
+            return np.clip(np.array([x, x, x]).transpose((1, 2, 0)), 0, 255)
+
+        motion_blur._np_compat = True
+        ew.motion_blur = motion_blur
+
+        # Same class of bug in the fog family: plasma_fractal uses np.float_
+        # (removed in numpy 2.0, env_wrapper.py:105). Re-exec the fork's own
+        # source with the one dtype name substituted — line-for-line faithful
+        # by construction.
+        import inspect
+
+        src = inspect.getsource(ew.plasma_fractal).replace("np.float_", "np.float64")
+        namespace = ew.__dict__.copy()
+        exec(src, namespace)
+        namespace["plasma_fractal"]._np_compat = True
+        ew.plasma_fractal = namespace["plasma_fractal"]
 
     def _load(self, bddl_path: str):
         from liberoplus.liberoplus.envs import OffScreenRenderEnv
 
+        self._patch_motion_blur_numpy_compat()
         if self._env is not None:
             self._env.close()
         self._env = OffScreenRenderEnv(
@@ -219,8 +286,15 @@ class LiberoPlusSession:
         if spec.bddl_path != self._loaded_bddl:
             self._load(spec.bddl_path)
 
-        if init_states is None:
+        # Per-episode reseed of the global np.random stream, same value in
+        # every arm (run seed + schedule position only). Scene-altering axes:
+        # pins robosuite's placement sampling (the original use). Noise axis
+        # (per_episode_np_seed): pins the per-frame corruption draws and the
+        # reset-time fixture placement. Historical axes stay UNSEEDED here —
+        # see __init__.
+        if init_states is None or self.per_episode_np_seed:
             self._env.seed(self.seed * 1_000_003 + spec.episode)
+        if init_states is None:
             obs = self._env.reset()
         else:
             self._env.reset()

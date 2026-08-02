@@ -206,7 +206,10 @@ def main():
         arm_tag = f"{args.pladis_qgroup} x {args.pladis_kind} (s={args.pladis_scale:g})"
     video_label = f"{model_tag} | {arm_tag}"
 
-    sess = LiberoPlusSession(seed=args.seed)
+    from harness.env import RUNTIME_RNG_AXES
+
+    sess = LiberoPlusSession(seed=args.seed,
+                             per_episode_np_seed=axis in RUNTIME_RNG_AXES)
     t0, n_succ, n_run = time.time(), 0, 0
     for spec in todo:
         r = run_episode(

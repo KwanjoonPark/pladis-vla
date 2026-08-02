@@ -45,6 +45,12 @@ def robot_level(task_name):
     k = int(re.search(r"_initstate_(\d+)", task_name).group(1))
     return f"L{(k - 1) // 100 + 1}"
 
+def noise_cat(task_name):
+    """Corruption family from the `_noise_<N>` tail (N=1..50): decade ->
+    family, severity = N within decade (env_wrapper.py:283-305)."""
+    n = int(re.search(r"_noise_(\d+)", task_name).group(1))
+    return ["motion", "gauss", "zoom", "fog", "glass"][(n - 1) // 10]
+
 AXES = {
     "layout": {"prefix": "n17_layout", "cat": layout_cat,
                "cats": ["add", "level_sample", "moved_level"],
@@ -123,6 +129,8 @@ AXES = {
                      ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxt-temp20l15"),
                      ("allxt-temp20l15", "axt-temp20l15"),
                  ]},
+    "noise": {"prefix": "n17_noise", "cat": noise_cat,
+              "cats": ["motion", "gauss", "zoom", "fog", "glass"]},
     "robot": {"prefix": "n17_robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
               # 07-28 text-locus dose row (entmax), mirroring language
