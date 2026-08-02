@@ -49,6 +49,22 @@ MODELS: dict[str, ModelSpec] = {
         default_n_state_tokens=1,
         path_env_override="GR00T_MODEL_PATH",
     ),
+    "pi05": ModelSpec(
+        name="pi05",
+        venv="openpi",
+        loader="harness.model_pi05:load_pi05",
+        hook_module="pladis.attn_pi05",
+        model_root_env="MODEL_ROOT_PI05",
+        model_root_default="/home/reallab/parkkwanjoon/workspace/models/pi05_libero",
+        per_suite=False,  # one checkpoint for all four suites
+        # openpi's own LIBERO protocol: 10-step decoded chunk, execute the first 5.
+        # Step caps are PER-SUITE (sweep_pi05_common.sh: spatial 220 / object 280 /
+        # goal 300 / libero_10 520) and always passed by the driver; this default only
+        # covers bare eval_arm.py runs and uses the libero_10 anchor cap.
+        default_exec_horizon=5,
+        default_max_steps=520,
+        default_n_state_tokens=1,
+    ),
     "smolvla": ModelSpec(
         name="smolvla",
         venv="lerobot",

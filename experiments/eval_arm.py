@@ -7,17 +7,33 @@ all go through this one entry point so every result shares one code path.
       --out results/foo_eplog.tsv \
       [--pladis-scale 1.0 --pladis-qgroup action --pladis-kind image]
 
+  bash experiments/run.sh --venv openpi experiments/eval_arm.py --model pi05 \
+      --axis language --episodes 0 --seed 0 --max-steps 520 --exec-horizon 5 \
+      --out results/foo_eplog.tsv [--pladis-install --pladis-scale 1.0 --pladis-kind text]
+
 --model selects a ModelSpec from harness/registry.py: it resolves the
 adapter loader, the PLADIS hook module, the default checkpoint path, and the
 model's protocol defaults (exec horizon / step cap / n_state_tokens) for any
 flag left unset. Loader and hooks are imported lazily, AFTER the resume
 check, so a completed arm exits in seconds and a model never needs the other
-tracks' venvs.
+tracks' venvs. Keeping every track on ONE evaluator is deliberate — a
+sibling script would duplicate the resume ledger, the seeded schedule, the
+arm signature, the git provenance and the video labelling, and a silent
+divergence between the copies would leave no trace in the eplogs (the TSV
+carries no arm identity, harness/eplog.py:8-15). The model-specific surface
+is the registry lookup, one install branch and one tag branch.
 
 PLADIS is installed explicitly (the registry's hook module), never via env
-vars. --pladis-scale 0 with --pladis-install gives base0: the hook is
-installed but delegates to the model's native attention path, so base0 is
-BIT-identical to vanilla. Omitting --pladis-install gives vanilla.
+vars. Omitting --pladis-install gives vanilla.
+  * gr00t_n17: --pladis-scale 0 with --pladis-install gives base0 — the hook is
+    installed but delegates to the native fused SDPA (official PLADIS lambda=0
+    semantics), so base0 is BIT-identical to vanilla.
+  * pi05: lambda=0 returns the plain softmax the stock gemma eager path computes, so
+    base0 is likewise bit-identical (verify_pi05_hook.py gate A). pi0.5's suffix is
+    action-only, so the qgroup axis does not exist there; the locus axis is --pladis-kind
+    over the key sub-blocks (text / image / prefix / all).
+
+
 Resume: episodes already in --out are skipped (eplog is the ledger).
 """
 
@@ -28,10 +44,24 @@ import os
 import re
 import time
 
+import torch
+
 from harness.env import LiberoPlusTaskSet, LiberoPlusSession
 from harness.eplog import EpisodeLogger
 from harness.registry import MODELS, resolve_hooks, resolve_loader
 from harness.rollout import run_episode
+
+# The hooks spell the same transform differently (attn_gr00t_n17.py:74 "ent15max"
+# vs attn_pi05.py:53 / attn_smolvla.py:88 "entmax15"). --pladis-method therefore
+# defaults to None and is resolved per track BEFORE the arm signature is built, so
+# every pre-existing gr00t_n17 signature string stays byte-identical and its eplogs
+# still resume (harness/eplog.py:62-80 aborts on any signature change).
+_DEFAULT_METHOD = {"gr00t_n17": "ent15max", "pi05": "entmax15", "smolvla": "entmax15"}
+_METHOD_ALIAS = {
+    "gr00t_n17": {"entmax15": "ent15max"},
+    "pi05": {"ent15max": "entmax15"},
+    "smolvla": {"ent15max": "entmax15"},
+}
 
 
 def parse_args():
@@ -57,20 +87,55 @@ def parse_args():
                    help="record one mp4 (agentview+wrist) per episode into this dir")
     p.add_argument("--pladis-install", action="store_true")
     p.add_argument("--pladis-scale", type=float, default=0.0)
-    p.add_argument("--pladis-qgroup", default="all", choices=["all", "state", "action"])
-    p.add_argument("--pladis-kind", default="all", choices=["all", "text", "image"])
+    p.add_argument("--pladis-qgroup", default="all", choices=["all", "state", "action"],
+                   help="gr00t_n17 only: query row group (pi0.5's suffix is action-only)")
+    p.add_argument("--pladis-kind", default="all",
+                   choices=["all", "text", "image", "prefix", "state", "self"],
+                   help="key group. gr00t_n17: which cross blocks (all|text|image). "
+                        "pi05: which key sub-block of the joint-attention row "
+                        "('prefix' = the whole conditioning span as one "
+                        "mass-preserving block). smolvla: CA key sub-block "
+                        "(text|image|state|prefix) or 'self' = SA layers. Each hook "
+                        "rejects kinds outside its own set at install")
     p.add_argument("--pladis-cells", default=None,
-                   help="comma-separated {qgroup}x{kind} cells with per-kind qgroups "
-                        "(e.g. actionxtext,stateximage); overrides qgroup/kind")
-    p.add_argument("--pladis-method", default="ent15max")
+                   help="gr00t_n17 only: comma-separated {qgroup}x{kind} cells with "
+                        "per-kind qgroups (e.g. actionxtext,stateximage); overrides "
+                        "qgroup/kind")
+    p.add_argument("--pladis-method", default=None,
+                   help="sparse transform; defaults per track (gr00t_n17 ent15max / "
+                        "pi05 entmax15). sparsemax and softmax are valid on both")
     p.add_argument("--pladis-beta", type=float, default=1.0,
                    help="sparse-branch inverse temperature: sparse = method(beta*logits). "
                         "With --pladis-method softmax and beta>1 this is the paper's "
                         "S G.1 temperature-sharpened softmax control (tau = 1/beta)")
+    p.add_argument("--pladis-sparse-backend", default="entmax",
+                   choices=["entmax", "adasplash"],
+                   help="pi05 only: implementation of the sparse transform. `entmax` is "
+                        "exact/sorting-based (default, reproduces existing eplogs); "
+                        "`adasplash` is the Triton kernel — identical support, ~5x faster "
+                        "at this hook's shapes. Recorded in the arm signature")
     p.add_argument("--pladis-n-state-tokens", type=int, default=None,
                    help="leading state query rows; splits the [state; action] "
                         "sequence for --pladis-qgroup (default: per model)")
+    # pi0.5 key-axis geometry: [image(0:ni) | language(ni:ni+nl) | suffix]. Defaults are
+    # the real pi05_libero layout — 3 image slots x 256 + max_token_len 200 = 968 prefix,
+    # suffix = action_horizon 10. Re-validated against the live key_len at run time
+    # (attn_pi05.py raises on mismatch) and asserted by verify_pi05_delivery.py.
+    p.add_argument("--pladis-n-img-prefix", type=int, default=768,
+                   help="pi05 only: width of the image key block")
+    p.add_argument("--pladis-n-lang", type=int, default=200,
+                   help="pi05 only: width of the language key block")
+    p.add_argument("--pladis-max-suffix-query", type=int, default=100,
+                   help="pi05 only: only blend forwards whose query length is <= this, "
+                        "so the large-query prefix VLM pass stays dense")
     args = p.parse_args()
+
+    if args.pladis_method is None:
+        args.pladis_method = _DEFAULT_METHOD[args.model]
+    else:
+        args.pladis_method = _METHOD_ALIAS[args.model].get(
+            args.pladis_method, args.pladis_method
+        )
 
     # Fill protocol defaults from the ModelSpec. For gr00t_n17 the resolved
     # values reproduce the historical literals byte-for-byte — the arm
@@ -84,6 +149,28 @@ def parse_args():
         args.exec_horizon = spec.default_exec_horizon
     if args.pladis_n_state_tokens is None:
         args.pladis_n_state_tokens = spec.default_n_state_tokens
+
+    # Reject cross-track flag combinations BEFORE the model load (30s+) — and before an
+    # arm can start. Same spirit as the hooks' own empty-install guards: an arm whose
+    # locus flags do not mean what the operator thinks must never consume a sweep.
+    # (Kinds outside a hook's own set are rejected by that hook at install.)
+    if args.model == "pi05":
+        if args.pladis_qgroup != "all":
+            raise SystemExit(
+                "[arm] --pladis-qgroup is gr00t_n17-only: pi0.5's suffix is action-only "
+                "(state is embedded as discrete language keys, not a query row), so the "
+                "query-group axis collapses. Drop the flag; every pi05 arm is action-row."
+            )
+        if args.pladis_cells:
+            raise SystemExit("[arm] --pladis-cells is gr00t_n17-only (per-kind qgroups).")
+        if args.pladis_n_state_tokens != 1:
+            raise SystemExit("[arm] --pladis-n-state-tokens is gr00t_n17-only.")
+    elif args.model == "gr00t_n17":
+        if args.pladis_kind == "prefix":
+            raise SystemExit(
+                "[arm] --pladis-kind prefix is pi05/smolvla-only (it names a key-column "
+                "span of a joint-attention row; gr00t_n17 selects whole cross blocks)."
+            )
     return args, spec
 
 
@@ -117,6 +204,34 @@ def _model_tag(model_path: str) -> str:
     return f"{repo}/{sub}"
 
 
+def _assert_pi05_delivery(sess, ts, first_spec, model) -> None:
+    """Prove the PLADIS blend actually fires, BEFORE logging a single episode.
+
+    attn_pi05._uses_eager_gemma reads ``model.config._attn_implementation``; the openpi
+    policy object has no such attribute, so it returns None and install_pladis proceeds
+    with its guard collapsed onto assert_delivered() (attn_pi05.py:165-176, 234-243).
+    Handing it the gemma submodule instead would RAISE, because that config only becomes
+    "eager" during the first suffix step (pi0_pytorch.py:447). So the only correct order
+    is: install -> run one throwaway chunk -> assert.
+
+    Without this an arm can burn all 1,537 episodes running as vanilla while the eplog
+    and the .arm sidecar both claim it was an intervention.
+
+    The warm-up reuses the FIRST scheduled episode's reset, and its RNG effect is
+    contained: run_episode reseeds from (episode_seed, step) before every chunk
+    (harness/rollout.py) and sess.reset() re-runs for real when the loop starts, so
+    the logged rollout is bit-identical to one without the warm-up.
+    """
+    from pladis.attn_pi05 import CFG, assert_delivered
+
+    raw_obs, instruction = sess.reset(first_spec, ts.init_states_of(first_spec.task_name))
+    with torch.no_grad():
+        model.predict_action_batch(model.wrap_obs(raw_obs, instruction), mode="eval")
+    assert_delivered()
+    print(f"[arm] PLADIS delivered: {CFG.n_calls} blended forward(s), "
+          f"(query_len, key_len) seen = {sorted(CFG.seen_shapes)}", flush=True)
+
+
 def main():
     args, spec = parse_args()
     axis = None if args.axis == "none" else args.axis
@@ -125,22 +240,55 @@ def main():
     # resume ledger and carries no arm identity of its own, so this is what
     # stops a re-run with different flags from appending into another arm's
     # file (harness/eplog.py).
+    if not args.pladis_install:
+        pladis_clause = "pladis=off"
+    elif args.model == "pi05":
+        # The geometry belongs in the signature: WHICH key sub-block gets sharpened is
+        # the experiment, so an eplog produced with a wrong n_lang must not resume into
+        # a correct one. No qgroup/cells/ns here — they do not exist for pi0.5.
+        # The sparse backend is APPENDED ONLY WHEN NON-DEFAULT. adasplash and entmax 1.3
+        # keep identical support (verified at all three block widths; see attn_pi05.py),
+        # but they are still different kernels, so an arm must not silently mix them —
+        # hence it belongs in the signature. Emitting nothing for the default keeps every
+        # signature written before 2026-07-31 byte-identical, so the 12,296 episodes of
+        # the language campaign still resume (harness/eplog.py:62-80 aborts on any change).
+        backend_clause = (
+            "" if args.pladis_sparse_backend == "entmax"
+            else f",be{args.pladis_sparse_backend}"
+        )
+        pladis_clause = (
+            f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
+            f"b{args.pladis_beta:g},k{args.pladis_kind},"
+            f"ni{args.pladis_n_img_prefix},nl{args.pladis_n_lang},"
+            f"msq{args.pladis_max_suffix_query}{backend_clause}"
+        )
+    else:
+        pladis_clause = (
+            f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
+            f"b{args.pladis_beta:g},"
+            + (f"cells[{args.pladis_cells}],"
+               if args.pladis_cells
+               else f"q{args.pladis_qgroup},k{args.pladis_kind},")
+            + f"ns{args.pladis_n_state_tokens}"
+        )
+
     arm_signature = "|".join(
         [
             f"suite={args.suite}",
             f"axis={args.axis}",
             f"seed={args.seed}",
             f"model={os.path.normpath(args.model_path)}",
+            # DELIBERATE ASYMMETRY — do not "clean up". model_kind is emitted only for
+            # tracks that postdate the field, so that every eplog written before it
+            # existed still resumes byte-identically (eplog.py:76 aborts otherwise, and
+            # there are in-flight gr00t_n17 sweeps). smolvla is also exempt: its anchor
+            # eplogs (results/smolvla_*_eplog.tsv, 2026-07-3x) predate the field, and
+            # the checkpoint path in model= already separates the tracks.
+            *([f"model_kind={args.model}"]
+              if args.model not in ("gr00t_n17", "smolvla") else []),
             f"max_steps={args.max_steps}",
             f"exec_horizon={args.exec_horizon}",
-            "pladis=off" if not args.pladis_install else (
-                f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
-                f"b{args.pladis_beta:g},"
-                + (f"cells[{args.pladis_cells}],"
-                   if args.pladis_cells
-                   else f"q{args.pladis_qgroup},k{args.pladis_kind},")
-                + f"ns{args.pladis_n_state_tokens}"
-            ),
+            pladis_clause,
         ]
     )
     print(f"[arm] signature {arm_signature}", flush=True)
@@ -162,7 +310,23 @@ def main():
         return
 
     model = resolve_loader(spec)(args.model_path)
-    if args.pladis_install:
+    if args.pladis_install and args.model == "pi05":
+        # pi0.5's hook has its own kwarg surface (key-block geometry, sparse
+        # backend, no qgroup axis). No block list to print — delivery is proven
+        # (and printed) by _assert_pi05_delivery below, before any episode is
+        # logged.
+        resolve_hooks(spec).install_pladis(
+            model,
+            pladis_scale=args.pladis_scale,
+            method=args.pladis_method,
+            beta=args.pladis_beta,
+            kind=args.pladis_kind,
+            n_img_prefix=args.pladis_n_img_prefix,
+            n_lang=args.pladis_n_lang,
+            max_suffix_query=args.pladis_max_suffix_query,
+            sparse_backend=args.pladis_sparse_backend,
+        )
+    elif args.pladis_install:
         hooks = resolve_hooks(spec)
         if args.pladis_cells:
             install_cells = getattr(hooks, "install_pladis_cells", None)
@@ -202,6 +366,9 @@ def main():
         arm_tag = "base0 (hook s=0)"
     elif args.pladis_cells:
         arm_tag = f"{args.pladis_cells} (s={args.pladis_scale:g})"
+    elif args.model == "pi05":
+        # no query-group axis on pi0.5 — the locus IS the key sub-block
+        arm_tag = f"{args.pladis_kind} keys (s={args.pladis_scale:g})"
     else:
         arm_tag = f"{args.pladis_qgroup} x {args.pladis_kind} (s={args.pladis_scale:g})"
     video_label = f"{model_tag} | {arm_tag}"
@@ -210,6 +377,10 @@ def main():
 
     sess = LiberoPlusSession(seed=args.seed,
                              per_episode_np_seed=axis in RUNTIME_RNG_AXES)
+    if args.model == "pi05" and args.pladis_install:
+        _assert_pi05_delivery(sess, ts, todo[0], model)
+
+
     t0, n_succ, n_run = time.time(), 0, 0
     for spec in todo:
         r = run_episode(

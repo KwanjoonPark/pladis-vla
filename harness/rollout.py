@@ -104,6 +104,12 @@ def run_episode(
     success_once = False
     steps = 0
     while steps < max_steps:
+        # wrap_obs / predict_chunk / to_env_actions are MANDATORY adapter
+        # attributes, deliberately not getattr(..., default). A default would
+        # let a new adapter that forgets to_env_actions silently inherit
+        # another model's action decode (e.g. GR00T's gripper remap) — wrong
+        # absolute SR, invisible in arm-vs-arm contrasts. AttributeError on
+        # episode 1 is the correct behaviour.
         env_obs = model.wrap_obs(raw_obs, instruction)
         # pin the flow init noise for this inference; same schedule in every arm
         torch.manual_seed(episode_seed * 100_003 + steps)

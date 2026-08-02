@@ -33,8 +33,23 @@ export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl
 export MAGICK_HOME="$PLADIS_MAGICK_HOME"
 export LD_LIBRARY_PATH="$PLADIS_MAGICK_HOME/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 _PYPATH="$REPO"
-# the openpi track reuses RLinf's serving reference (toolkits./rlinf. imports)
-[ "$VENV_NAME" = "openpi" ] && _PYPATH="$_PYPATH:$PLADIS_RLINF_PATH"
+if [ "$VENV_NAME" = "openpi" ]; then
+  # RLinf is NOT on the pi0.5 eval path (harness/model_pi05.py builds the official
+  # openpi Policy from openpi.* only — the GR00T lesson at model_gr00t.py:4-11).
+  # It stays importable solely for the serving-route bisect reference,
+  # toolkits/standalone_eval_scripts/openpi/libero_eval.py.
+  _PYPATH="$_PYPATH:$PLADIS_RLINF_PATH"
+  # jax is a HARD import dependency of openpi even on the PyTorch path
+  # (openpi.transforms / openpi.policies.policy / openpi.shared.download all import
+  # it). Left on GPU it preallocates ~75% of a device at import time, which OOMs the
+  # rollout or, on this shared box, steals a neighbouring project's GPU.
+  export JAX_PLATFORMS=cpu XLA_PYTHON_CLIENT_PREALLOCATE=false
+  # pi0_pytorch.py:112 unconditionally torch.compile(sample_actions, "max-autotune").
+  # A compiled graph bakes in whichever eager_attention_forward global it traced, which
+  # would silently un-install the PLADIS monkeypatch AND hide the flow-noise RNG.
+  # harness/model_pi05.py also un-compiles explicitly and asserts; this is the belt.
+  export TORCH_COMPILE_DISABLE=1
+fi
 export PYTHONPATH="$_PYPATH${PYTHONPATH:+:$PYTHONPATH}"
 export HF_TOKEN="$(cat "$PLADIS_HF_TOKEN_FILE")"
 export TOKENIZERS_PARALLELISM=false

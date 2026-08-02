@@ -6,7 +6,7 @@ SUCCESS/FAIL end card (streaming encode cannot retro-label earlier frames).
 Overlay text must stay ASCII — cv2 Hershey fonts render nothing else.
 
 Frames are the two camera streams fed to the model (agentview + wrist, both
-180°-rotated as in rollout.wrap_obs_gr00t), hstacked to (H, 2W, 3). The
+180°-rotated as in OfficialGr00tPolicy.wrap_obs), hstacked to (H, 2W, 3). The
 recorder is a pure observation consumer — it never touches torch RNG or the
 model path — so recorded and unrecorded runs are step-identical.
 

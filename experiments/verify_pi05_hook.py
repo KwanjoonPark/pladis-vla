@@ -188,9 +188,63 @@ def gate_F():
     print("PASS gate F: patch intercepts a real GemmaAttention forward; install idempotent")
 
 
+def gate_G():
+    """The adasplash backend must be the SAME intervention, not just a fast one.
+
+    `--pladis-sparse-backend adasplash` swaps entmax 1.3's exact sorting-based transform
+    for a Triton solver. What makes that legitimate is not the speedup but the SUPPORT:
+    which columns survive IS the intervention, so a backend keeping a different set would
+    be a different arm wearing the same flags — and nothing in the eplog would show it.
+
+    Checked at the REAL block widths (200 / 768 / 968), not this file's toy geometry,
+    because the solver's behaviour is width-dependent. Needs CUDA (Triton), so on a CPU
+    box the check is skipped and the CPU fallback is asserted instead.
+    """
+    from pladis import attn_pi05
+
+    if not attn_pi05._HAVE_ADASPLASH:
+        print("SKIP gate G: adasplash not installed (optional backend)")
+        return
+
+    # The backend is CUDA-only by construction; on CPU `_sparse` must fall back to entmax
+    # rather than crash, or every CPU gate would break the moment the flag is set.
+    CFG.sparse_backend = "adasplash"
+    try:
+        z_cpu = torch.randn(2, 3, 5, 64)
+        got = attn_pi05._sparse(z_cpu, "entmax15")
+        assert torch.equal(got, entmax15(z_cpu, dim=-1)), \
+            "G: CPU path did not fall back to entmax under sparse_backend='adasplash'"
+    finally:
+        CFG.sparse_backend = "entmax"
+    print("PASS gate G: CPU falls back to entmax when the Triton backend is selected")
+
+    if not torch.cuda.is_available():
+        print("SKIP gate G (CUDA part): no device — run on the openpi machine")
+        return
+
+    for width in (200, 768, 968):
+        z = (torch.randn(1, 8, 10, width, device="cuda") * 6.0)
+        ref = entmax15(z, dim=-1)
+        CFG.sparse_backend = "adasplash"
+        try:
+            got = attn_pi05._sparse(z, "entmax15")
+        finally:
+            CFG.sparse_backend = "entmax"
+        same_support = bool(((got > 0) == (ref > 0)).all().item())
+        max_dev = (got - ref).abs().max().item()
+        assert same_support, (
+            f"G: adasplash support differs from entmax at width {width} — the two "
+            "backends are NOT the same intervention, so arms must not be mixed"
+        )
+        # fp32 rounding only; a real algorithmic divergence would be orders larger
+        assert max_dev < 1e-4, f"G: adasplash deviates by {max_dev:.2e} at width {width}"
+        print(f"PASS gate G: adasplash ≡ entmax support at width {width} "
+              f"(max|dp|={max_dev:.1e})")
+
+
 def main():
     torch.manual_seed(0)
-    gate_A(); gate_B(); gate_C(); gate_D(); gate_E(); gate_F()
+    gate_A(); gate_B(); gate_C(); gate_D(); gate_E(); gate_F(); gate_G()
     print("ALL GATES PASSED (CPU smoke; openpi-machine delivery gate still required)")
 
 

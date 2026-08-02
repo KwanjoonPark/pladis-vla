@@ -1,13 +1,22 @@
-"""Unified post-hoc analysis of the n17 sweeps.
+"""Unified post-hoc analysis of the sweeps, for both model tracks.
 
-  python analysis/analyze.py --layout     # n17_layout_* (7 arms x 1,525 eps)
-  python analysis/analyze.py --language   # n17_lang_*   (7 arms x 1,537 eps)
-  python analysis/analyze.py --robot      # n17_robot_*  (7 arms x 1,550 eps)
+  python analysis/analyze.py --layout                # n17_layout_*  (7 arms x 1,525 eps)
+  python analysis/analyze.py --language              # n17_lang_*    (7 arms x 1,537 eps)
+  python analysis/analyze.py --robot                 # n17_robot_*   (7 arms x 1,550 eps)
+  python analysis/analyze.py --model pi05 --language  # pi05_lang_*  (4 arms x 1,537 eps)
 
 Pairing: identical seed-0 schedule across arms -> pair by (suite, episode);
 task_name equality is asserted. Test = paired McNemar, z = (n01-n10)/sqrt(disc).
-Baseline severity uses n17_orig_vanilla_* (per-base-task mean over init 0-9).
+Baseline severity uses <model>_orig_vanilla_* (per-base-task mean over init 0-9).
 Read-only; writes nothing.
+
+The two tracks study different design spaces, so the arm names and contrasts live in
+MODELS below rather than being hardcoded:
+  * n17  — query group x key modality, a 2x2 grid ({state,action} x {text,image}).
+  * pi05 — key sub-block only. pi0.5's suffix is action-only (pi05_libero sets
+    discrete_state_input=False), so the query axis collapses and every arm is
+    action-row x <keys>. `text` is the direct port of the official FLUX intervention;
+    `image` is the contrast with no upstream precedent.
 
 Metric: `success_once`, the protocol's primary (README S2). Rollouts stop on
 first contact with success, so success_at_end is evaluated at that same sim
@@ -20,15 +29,75 @@ from pathlib import Path
 
 SWEEP = Path(__file__).resolve().parent.parent / "results" / "sweep"
 SUITES = ["libero_10", "libero_goal", "libero_object", "libero_spatial"]
-ARMS = ["vanilla", "base0", "actionxtext", "actionximage",
-        "statextext", "stateximage", "allxall"]
-KEY_CONTRASTS = [  # locus + each action arm vs both baselines + gates
-    ("actionxtext", "actionximage"),
-    ("actionxtext", "base0"), ("actionxtext", "vanilla"),
-    ("actionximage", "base0"), ("actionximage", "vanilla"),
-    ("statextext", "stateximage"),
-    ("allxall", "base0"), ("base0", "vanilla"),
-]
+
+MODELS = {
+    "n17": {
+        "tag": "n17",
+        "arms": ["vanilla", "base0", "actionxtext", "actionximage",
+                 "statextext", "stateximage", "allxall"],
+        "key_contrasts": [  # locus + each action arm vs both baselines + gates
+            ("actionxtext", "actionximage"),
+            ("actionxtext", "base0"), ("actionxtext", "vanilla"),
+            ("actionximage", "base0"), ("actionximage", "vanilla"),
+            ("statextext", "stateximage"),
+            ("allxall", "base0"), ("base0", "vanilla"),
+        ],
+        "locus_pair": ("actionxtext", "actionximage"),
+        "suite_contrasts": [("actionxtext", "actionximage"), ("actionxtext", "base0"),
+                            ("actionximage", "base0"), ("base0", "vanilla")],
+        "cat_contrasts": [("actionxtext", "actionximage"), ("actionxtext", "base0"),
+                          ("actionximage", "base0")],
+    },
+    # pi0.5: VANILLA IS THE REFERENCE (operator decision 2026-07-29). base0 is not an arm
+    # — it is bit-identical to vanilla (verify_pi05_hook.py gate A, re-confirmed
+    # end-to-end by verify_pi05_parity.py check (b)) and would burn 1,537 episodes
+    # re-proving a 10-episode assertion; the same call sweep_n17_robot.sh:9-12 made for
+    # the n17 robot axis.
+    #
+    # base_dense is demoted to an EXTRA arm rather than removed, because its λ=1 eplogs
+    # (4 suites × 1,537 eps) are already collected and are the only direct measurement of
+    # the λ>0 numeric term. What they measured: verify_pi05_parity.py check (c) found
+    # 0.0000% of bf16 attention elements differing at module level, yet dense diverged
+    # from vanilla in ALL 10 rollout episodes, and at sweep scale base_dense landed
+    # -0.91pp below vanilla — float32 reassociation inside the λ>0 branch, below bf16
+    # resolution per call and amplified by ~45k closed-loop attention calls per episode.
+    #
+    # Consequence for how the primary contrasts read: `text - vanilla` and
+    # `image - vanilla` carry that term alongside the intervention, so a beneficial locus
+    # effect is understated there (at λ=1, text - vanilla was +0.33pp against
+    # text - base_dense +1.24pp). The LOCUS PAIR is unaffected — both arms run the
+    # identical λ>0 path, so the term cancels within the pair — which is why
+    # `text - image` is the primary contrast.
+    "pi05": {
+        "tag": "pi05",
+        "arms": ["vanilla", "text", "image"],
+        "key_contrasts": [
+            ("text", "image"),                        # THE locus contrast
+            ("text", "vanilla"), ("image", "vanilla"),
+        ],
+        "locus_pair": ("text", "image"),
+        "suite_contrasts": [("text", "image"), ("text", "vanilla"), ("image", "vanilla")],
+        "cat_contrasts": [("text", "image")],
+        # Extra arms are skipped until all four of their suite eplogs exist, so the driver
+        # can be appended to while a campaign is running.
+        "extra_arms": ["base_dense", "prefix", "all",
+                       "text15", "image15", "text20", "image20"],
+        "extra_contrasts": [
+            ("base_dense", "vanilla"),          # size of the λ>0 numeric term (λ=1)
+            ("text", "base_dense"), ("image", "base_dense"),
+            ("prefix", "text"), ("prefix", "image"), ("prefix", "vanilla"),
+            ("all", "prefix"), ("all", "vanilla"),
+            # λ=1.5 — locus pair first, then vanilla and the dose step from λ=1
+            ("text15", "image15"),
+            ("text15", "vanilla"), ("image15", "vanilla"),
+            ("text15", "text"), ("image15", "image"),
+            # λ=2.0 — same, stepping from λ=1.5
+            ("text20", "image20"),
+            ("text20", "vanilla"), ("image20", "vanilla"),
+            ("text20", "text15"), ("image20", "image15"),
+        ],
+    },
+}
 
 def layout_cat(task_name):
     if "_add_" in task_name or task_name.endswith("_add"):
@@ -51,20 +120,25 @@ def noise_cat(task_name):
     n = int(re.search(r"_noise_(\d+)", task_name).group(1))
     return ["motion", "gauss", "zoom", "fog", "glass"][(n - 1) // 10]
 
+# Axis-level metadata is model-INDEPENDENT (it describes the perturbation, not the
+# intervention): `tag` builds the eplog prefix as f"{model_tag}_{axis_tag}", and cat/cats
+# are the per-category breakdown. `extra_arms`/`extra_contrasts` here are keyed BY MODEL,
+# because they name concrete arm tags.
 AXES = {
-    "layout": {"prefix": "n17_layout", "cat": layout_cat,
+    "layout": {"tag": "layout", "cat": layout_cat,
                "cats": ["add", "level_sample", "moved_level"],
                # 07-28 text-locus dose row (entmax), mirroring language
-               "extra_arms": ["actionxtext15", "actionxtext20",
-                              "allxtext", "allxtext15", "allxtext20"],
-               "extra_contrasts": [
+               "extra_arms": {"n17": [
+                              "actionxtext15", "actionxtext20",
+                              "allxtext", "allxtext15", "allxtext20"]},
+               "extra_contrasts": {"n17": [
                    ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                    ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
                    ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
                    ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
                    ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
-               ]},
-    "language": {"prefix": "n17_lang", "cat": None, "cats": [],
+               ]}},
+    "language": {"tag": "lang", "cat": None, "cats": [],
                  # extra arms are skipped until all four suite eplogs exist.
                  # 07-22 composition arms: allxtext = {action,state}xtext;
                  #   axt-sxi = actionxtext+stateximage.
@@ -79,15 +153,16 @@ AXES = {
                  #   lambda ladder at both text loci — axt-temp20l{15,20} and
                  #   allxt-temp20{,l15,l20} — head-to-head vs the entmax
                  #   counterparts (zeros-vs-sharpening in the extrapolation regime).
-                 "extra_arms": ["allxtext", "axt-sxi",
+                 "extra_arms": {"n17": [
+                                "allxtext", "axt-sxi",
                                 "actionxtext15", "allxtext15", "axt-sxi15",
                                 "actionximage15", "stateximage15", "statextext15",
                                 "axt-temp15", "axt-temp20", "axt-temp30",
                                 "actionxtext20", "actionximage20",
                                 "stateximage20", "statextext20",
                                 "axt-temp20l15", "axt-temp20l20",
-                                "allxt-temp20", "allxt-temp20l15", "allxt-temp20l20"],
-                 "extra_contrasts": [
+                                "allxt-temp20", "allxt-temp20l15", "allxt-temp20l20"]},
+                 "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
                      ("axt-sxi", "stateximage"),
@@ -128,21 +203,22 @@ AXES = {
                      ("allxt-temp20l15", "allxt-temp20"),
                      ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxt-temp20l15"),
                      ("allxt-temp20l15", "axt-temp20l15"),
-                 ]},
-    "noise": {"prefix": "n17_noise", "cat": noise_cat,
+                 ]}},
+    "noise": {"tag": "noise", "cat": noise_cat,
               "cats": ["motion", "gauss", "zoom", "fog", "glass"]},
-    "robot": {"prefix": "n17_robot", "cat": robot_level,
+    "robot": {"tag": "robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
               # 07-28 text-locus dose row (entmax), mirroring language
-              "extra_arms": ["actionxtext15", "actionxtext20",
-                             "allxtext", "allxtext15", "allxtext20"],
-              "extra_contrasts": [
+              "extra_arms": {"n17": [
+                             "actionxtext15", "actionxtext20",
+                             "allxtext", "allxtext15", "allxtext20"]},
+              "extra_contrasts": {"n17": [
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
                   ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
                   ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
                   ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
-              ]},
+              ]}},
 }
 
 def load(prefix, arm):
@@ -166,21 +242,29 @@ def mcnemar(a, b, keys):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--model", default="n17", choices=sorted(MODELS),
+                    help="model track (selects arm names, contrasts and eplog prefix)")
     g = ap.add_mutually_exclusive_group(required=True)
     for name in AXES:
         g.add_argument(f"--{name}", action="store_true")
     args = ap.parse_args()
     axis = next(a for a in AXES if getattr(args, a))
     cfg = AXES[axis]
+    mcfg = MODELS[args.model]
+    prefix = f"{mcfg['tag']}_{cfg['tag']}"
 
-    arms = list(ARMS)
-    for a in cfg.get("extra_arms", []):
-        if all((SWEEP / f"{cfg['prefix']}_{a}_{s}_eplog.tsv").exists() for s in SUITES):
+    arms = list(mcfg["arms"])
+    # model-level extras (phase-2 arms of that track) + axis-level extras for this model
+    extra_arms = list(mcfg.get("extra_arms", [])) + list(
+        cfg.get("extra_arms", {}).get(args.model, [])
+    )
+    for a in extra_arms:
+        if all((SWEEP / f"{prefix}_{a}_{s}_eplog.tsv").exists() for s in SUITES):
             arms.append(a)
         else:
             print(f"[note] extra arm {a!r}: eplogs missing/incomplete, skipped")
 
-    data = {arm: load(cfg["prefix"], arm) for arm in arms}
+    data = {arm: load(prefix, arm) for arm in arms}
     keys = sorted(data["vanilla"].keys())
     for arm in arms:  # schedule identity across arms
         assert set(data[arm].keys()) == set(keys), f"episode-set mismatch: {arm}"
@@ -218,8 +302,10 @@ def main():
     # promises the correction is noted, so compute it rather than leave it to
     # the reader): m = number of pooled contrasts tested here, INCLUDING any
     # axis-specific extra contrasts.
-    contrasts = KEY_CONTRASTS + [
-        c for c in cfg.get("extra_contrasts", []) if c[0] in arms and c[1] in arms
+    contrasts = list(mcfg["key_contrasts"]) + [
+        c for c in list(mcfg.get("extra_contrasts", []))
+        + list(cfg.get("extra_contrasts", {}).get(args.model, []))
+        if c[0] in arms and c[1] in arms
     ]
     m = len(contrasts)
     print(f"\n== paired McNemar, pooled (Bonferroni m={m}, alpha=.05 -> "
@@ -233,8 +319,7 @@ def main():
     print("  (* survives Bonferroni; . nominal p<.05 only)")
 
     print("\n== key contrasts per suite ==")
-    for a, b in [("actionxtext", "actionximage"), ("actionxtext", "base0"),
-                 ("actionximage", "base0"), ("base0", "vanilla")]:
+    for a, b in [c for c in mcfg["suite_contrasts"] if c[0] in arms and c[1] in arms]:
         print(f"  {a} - {b}:")
         for s in SUITES:
             n01, n10, z, p = mcnemar(data[a], data[b], per_suite[s])
@@ -244,8 +329,7 @@ def main():
 
     if cats:
         print("\n== key contrasts per category ==")
-        for a, b in [("actionxtext", "actionximage"), ("actionxtext", "base0"),
-                     ("actionximage", "base0")]:
+        for a, b in [c for c in mcfg["cat_contrasts"] if c[0] in arms and c[1] in arms]:
             print(f"  {a} - {b}:")
             for c in cfg["cats"]:
                 ks = [k for k in keys if cats[k] == c]
@@ -254,20 +338,30 @@ def main():
                 print(f"    {c:13s} {d:+6.2f}pp  disc {n01:3d}:{n10:3d}"
                       f"  z={z:+5.2f}  p={p:.4g}")
 
-    orig = defaultdict(list)
-    for s in SUITES:
-        p = SWEEP / f"n17_orig_vanilla_{s}_eplog.tsv"
-        for r in csv.DictReader(open(p), delimiter="\t"):
-            orig[(s, r["base_task"])].append(int(r["success_once"]))
-    orig_sr = {bt: 100 * sum(v) / len(v) for bt, v in orig.items()}
-    print(f"\n== perturbation severity: {axis} vanilla vs original vanilla ==")
-    for s in SUITES:
-        ks = per_suite[s]
-        o = sum(orig_sr[(s, data["vanilla"][k]["base_task"])] for k in ks) / len(ks)
-        print(f"  {s:15s} orig(task-matched) {o:5.1f}  {axis} {sr('vanilla', ks):5.1f}"
-              f"  drop {sr('vanilla', ks) - o:+6.1f}pp")
+    # Severity needs the axis=none reference sweep of the SAME model. Guarded rather than
+    # assumed: without the guard a missing file makes the whole analysis unusable until
+    # the original sweep finishes, when everything above it is already valid.
+    orig_paths = [SWEEP / f"{mcfg['tag']}_orig_vanilla_{s}_eplog.tsv" for s in SUITES]
+    if not all(p.exists() for p in orig_paths):
+        missing = [p.name for p in orig_paths if not p.exists()]
+        print(f"\n[note] severity baseline skipped: missing {missing} "
+              f"(run experiments/sweep_{mcfg['tag']}_original.sh)")
+    else:
+        orig = defaultdict(list)
+        for s, p in zip(SUITES, orig_paths):
+            for r in csv.DictReader(open(p), delimiter="\t"):
+                orig[(s, r["base_task"])].append(int(r["success_once"]))
+        orig_sr = {bt: 100 * sum(v) / len(v) for bt, v in orig.items()}
+        print(f"\n== perturbation severity: {axis} vanilla vs original vanilla ==")
+        for s in SUITES:
+            ks = per_suite[s]
+            o = sum(orig_sr[(s, data["vanilla"][k]["base_task"])] for k in ks) / len(ks)
+            print(f"  {s:15s} orig(task-matched) {o:5.1f}  {axis} {sr('vanilla', ks):5.1f}"
+                  f"  drop {sr('vanilla', ks) - o:+6.1f}pp")
 
-    print("\n== biggest per-task a_t vs a_i deltas (n>=8 variants, |delta|>=20pp) ==")
+    lo_a, lo_b = mcfg["locus_pair"]
+    print(f"\n== biggest per-task {lo_a} vs {lo_b} deltas "
+          f"(n>=8 variants, |delta|>=20pp) ==")
     bt_keys = defaultdict(list)
     for k in keys:
         bt_keys[(k[0], data["vanilla"][k]["base_task"])].append(k)
@@ -275,11 +369,11 @@ def main():
     for bt, ks in bt_keys.items():
         if len(ks) < 8:
             continue
-        d = sr("actionxtext", ks) - sr("actionximage", ks)
+        d = sr(lo_a, ks) - sr(lo_b, ks)
         if abs(d) >= 20:
-            rows.append((d, bt, len(ks), sr("actionxtext", ks), sr("actionximage", ks)))
+            rows.append((d, bt, len(ks), sr(lo_a, ks), sr(lo_b, ks)))
     for d, bt, n, at, ai in sorted(rows, reverse=True):
-        print(f"  {d:+6.1f}pp (n={n:2d}, a_t {at:4.1f} a_i {ai:4.1f})"
+        print(f"  {d:+6.1f}pp (n={n:2d}, {lo_a} {at:4.1f} {lo_b} {ai:4.1f})"
               f" {bt[0]}:{bt[1][:70]}")
     if not rows:
         print("  (none)")
