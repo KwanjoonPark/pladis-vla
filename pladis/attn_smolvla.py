@@ -29,10 +29,20 @@ blend — a full row is already a normalized distribution.
   ``text``   CA layers, language columns          (a×t)
   ``image``  CA layers, image columns             (a×i)
   ``state``  CA layers, the state token column(s) (a×state — key-side state,
-             the dual of GR00T's state-QUERY arms)
+             the dual of GR00T's state-QUERY arms). ONLY meaningful for
+             n_state >= 2: at width 1 the mass-preserving blend is a bit-exact
+             no-op and install raises (SmolVLA embeds state as ONE token, so
+             this locus does not exist on real checkpoints — 2026-08-02)
   ``prefix`` CA layers, whole row                 (a×prefix — the true
-             analogue of GR00T's allxall: every cross column, no self)
+             analogue of GR00T's allxall: every cross column, no self.
+             PLAIN blend: the ONE kind that lets mass cross block borders)
   ``self``   SA layers, suffix columns            (a×self — action↔action)
+  ``cams``   CA layers, image split per camera    (a×cam — camera1 and
+             camera2 each sharpened with its OWN mass fixed; no mass moves
+             between cameras, unlike ``image``)
+  ``text-image`` CA layers, text AND image blocks, each with its own mass
+             fixed — the maximal mass-preserving prefix intervention
+             (state is width 1, where preservation is the identity)
 
 ``qgroup`` is accepted for API symmetry with the other hooks: the suffix has
 no state query row, so ``state`` raises and ``action`` == ``all``.
@@ -89,7 +99,15 @@ except Exception as exc:  # pragma: no cover - surfaced only if entmax missing
     ) from exc
 
 _VALID_METHODS = ("entmax15", "sparsemax", "softmax")
-_VALID_KINDS = ("text", "image", "state", "prefix", "self")
+# `cams` and `text-image` are MULTI-BLOCK kinds (2026-08-02, operator request:
+# every sweep arm must preserve modality mass): each listed block is sharpened
+# within itself with its own dense mass held fixed, so no mass crosses a block
+# boundary at any λ.
+#   cams        CA image split per camera: [0:n_img/2 | n_img/2:n_img], each MP
+#   text-image  CA image block + text block, each MP — the MAXIMAL mass-preserving
+#               prefix intervention (the state block is width 1, where MP is the
+#               identity, so nothing else can be sharpened under mass preservation)
+_VALID_KINDS = ("text", "image", "state", "prefix", "self", "cams", "text-image")
 
 
 @dataclass
@@ -122,8 +140,14 @@ def _sparse(z: torch.Tensor, method: str) -> torch.Tensor:
     return torch.softmax(z, dim=-1)
 
 
-def _blend_rows(scores_f: torch.Tensor, lo: int, hi: int, whole_row: bool) -> torch.Tensor:
-    """``scores_f``: [B,H,Q,K] float32 post-mask logits. Returns blended weights."""
+def _blend_rows(scores_f: torch.Tensor, blocks, whole_row: bool) -> torch.Tensor:
+    """``scores_f``: [B,H,Q,K] float32 post-mask logits; ``blocks``: disjoint
+    (lo, hi) key spans. Returns blended weights.
+
+    Each block is sharpened WITHIN itself with its own dense mass held fixed —
+    the N1.5-doc / FLUX form applied per block — so no mass crosses a block
+    boundary and the row stays normalized for any λ. Single-block kinds pass a
+    one-element list; multi-block kinds (cams, text-image) simply iterate."""
     dense = torch.softmax(scores_f, dim=-1)
     scale, beta, method = CFG.scale, CFG.beta, CFG.method
     # finite floor AFTER the beta multiply (masked cols carry ~ -3.4e38): entmax
@@ -135,18 +159,20 @@ def _blend_rows(scores_f: torch.Tensor, lo: int, hi: int, whole_row: bool) -> to
         sparse = _sparse(z, method)
         return dense + scale * (sparse - dense)
 
-    z = (beta * scores_f[..., lo:hi]).clamp_min(neg)
-    p = _sparse(z, method)                              # block distribution (sums to 1)
-    m = dense[..., lo:hi].sum(dim=-1, keepdim=True)     # original block mass
     w = dense.clone()
-    w[..., lo:hi] = dense[..., lo:hi] + scale * (m * p - dense[..., lo:hi])
+    for lo, hi in blocks:
+        z = (beta * scores_f[..., lo:hi]).clamp_min(neg)
+        p = _sparse(z, method)                          # block distribution (sums to 1)
+        m = dense[..., lo:hi].sum(dim=-1, keepdim=True)  # original block mass
+        w[..., lo:hi] = dense[..., lo:hi] + scale * (m * p - dense[..., lo:hi])
     return w
 
 
 def _geometry(kind: str, q_len: int, k_len: int):
-    """Classify the call and return (layer_type, lo, hi, whole_row) or raise.
+    """Classify the call and return (layer_type, blocks, whole_row) or raise.
 
-    layer_type: "prefix" (record + dense), "ca", or "sa"."""
+    layer_type: "prefix" (record + dense), "ca", or "sa"; blocks: list of
+    disjoint (lo, hi) key spans the blend treats independently."""
     ni, ns = CFG.n_img, CFG.n_state
 
     if q_len == k_len:
@@ -157,7 +183,7 @@ def _geometry(kind: str, q_len: int, k_len: int):
                 f"n_img+n_state={ni + ns} — n_img is wrong for this checkpoint."
             )
         CFG.prefix_len = k_len
-        return "prefix", 0, 0, False
+        return "prefix", [], False
 
     P = CFG.prefix_len
     if P is None:
@@ -188,16 +214,24 @@ def _geometry(kind: str, q_len: int, k_len: int):
         )
 
     if kind == "image":
-        lo, hi, whole = 0, ni, False
+        blocks, whole = [(0, ni)], False
+    elif kind == "cams":
+        # per-camera mass preservation: prefix image span = [camera1 | camera2] in the
+        # checkpoint preprocessor's feature order (camera1 = agentview, camera2 = wrist
+        # — model_smolvla.py wrap_obs + the ckpt's saved rename map), 64 connector
+        # tokens each on the official ckpt. Install asserts n_img is even.
+        blocks, whole = [(0, ni // 2), (ni // 2, ni)], False
     elif kind == "text":
-        lo, hi, whole = ni, ni + n_lang, False
+        blocks, whole = [(ni, ni + n_lang)], False
+    elif kind == "text-image":
+        blocks, whole = [(0, ni), (ni, ni + n_lang)], False
     elif kind == "state":
-        lo, hi, whole = ni + n_lang, P, False
+        blocks, whole = [(ni + n_lang, P)], False
     elif kind == "prefix":
-        lo, hi, whole = 0, k_len, True
+        blocks, whole = [(0, k_len)], True
     else:  # self: suffix columns of an SA row
-        lo, hi, whole = P, k_len, False
-    return layer, lo, hi, whole
+        blocks, whole = [(P, k_len)], False
+    return layer, blocks, whole
 
 
 def _maybe_blend(masked_att_weights: torch.Tensor) -> torch.Tensor:
@@ -206,7 +240,7 @@ def _maybe_blend(masked_att_weights: torch.Tensor) -> torch.Tensor:
     q_len = masked_att_weights.shape[-2]
     k_len = masked_att_weights.shape[-1]
 
-    layer, lo, hi, whole = _geometry(CFG.kind, q_len, k_len)
+    layer, blocks, whole = _geometry(CFG.kind, q_len, k_len)
 
     intervene = (
         CFG.scale != 0.0
@@ -219,7 +253,7 @@ def _maybe_blend(masked_att_weights: torch.Tensor) -> torch.Tensor:
         CFG.n_calls_ca += 1
     else:
         CFG.n_calls_sa += 1
-    return _blend_rows(masked_att_weights, lo, hi, whole)
+    return _blend_rows(masked_att_weights, blocks, whole)
 
 
 def make_pladis_eager_attention_forward(model):
@@ -332,6 +366,23 @@ def install_pladis(
         )
     if qgroup not in ("all", "action"):
         raise ValueError(f"qgroup must be all|action for SmolVLA, got {qgroup!r}")
+    if kind == "state" and int(n_state_tokens if n_state_tokens is not None else CFG.n_state) < 2:
+        # Width-1 block => mass-preserving blend is a BIT-EXACT identity: the block
+        # conditional is the constant 1, and m IS the single dense entry, so
+        # dense + λ(m·1 − dense) == dense for every λ (found 2026-08-02 by the Phase-D
+        # diagnostic). Same contract as the other hooks' empty-install guards: an arm
+        # that cannot differ from vanilla must never burn a sweep.
+        raise ValueError(
+            "kind='state' with a single state key token is a bit-exact no-op under the "
+            "mass-preserving sub-block blend (entmax over one column is 1; the blend "
+            "reduces to dense for every scale). SmolVLA embeds state as ONE prefix "
+            "token, so this locus does not exist — drop the arm."
+        )
+    if kind == "cams" and int(n_img if n_img is not None else CFG.n_img) % 2:
+        raise ValueError(
+            "kind='cams' splits the image span into two equal per-camera blocks and "
+            f"needs an even n_img (got {n_img if n_img is not None else CFG.n_img})."
+        )
 
     target = _find_vlm_with_expert(model)
 

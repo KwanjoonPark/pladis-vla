@@ -109,18 +109,26 @@ def gate_A():
 
 
 def gate_B():
+    # state runs at WIDTH 2 (n_state_tokens=2, its own prefix length): the identity is
+    # only non-trivial at width>=2 — width 1 is a bit-exact no-op and install now raises
+    # on it (see gate E), but the state-block SLICING path still deserves the check.
+    P_S2 = NI + NL_A + 2
     cases = [
-        ("image", 0, NI, S, P_A, False),
-        ("text", NI, NI + NL_A, S, P_A, False),
-        ("state", NI + NL_A, P_A, S, P_A, False),
-        ("self", P_A, P_A + S, S, P_A + S, False),
-        ("prefix", 0, P_A, S, P_A, True),
+        ("image", [(0, NI)], S, P_A, False, NS, P_A),
+        ("text", [(NI, NI + NL_A)], S, P_A, False, NS, P_A),
+        ("state", [(NI + NL_A, P_S2)], S, P_S2, False, 2, P_S2),
+        ("self", [(P_A, P_A + S)], S, P_A + S, False, NS, P_A),
+        ("prefix", [(0, P_A)], S, P_A, True, NS, P_A),
+        # multi-block mass-preserving kinds (2026-08-02): per-camera image split and
+        # text+image — the reference applies the FLUX form to EACH block independently
+        ("cams", [(0, NI // 2), (NI // 2, NI)], S, P_A, False, NS, P_A),
+        ("text-image", [(0, NI), (NI, NI + NL_A)], S, P_A, False, NS, P_A),
     ]
-    for kind, lo, hi, q_len, k_len, whole in cases:
+    for kind, blocks, q_len, k_len, whole, ns, p_len in cases:
         for lam in (1.0, 1.5, 2.5):
             stub = _StubExpert()
-            install_pladis(stub, pladis_scale=lam, kind=kind, n_img=NI, n_state_tokens=NS)
-            calibrate(stub, P_A)
+            install_pladis(stub, pladis_scale=lam, kind=kind, n_img=NI, n_state_tokens=ns)
+            calibrate(stub, p_len)
             q, k, v = mk_qkv(q_len, k_len, seed=1)
             mask = mk_mask(q_len, k_len, 0)  # finite scores -> the FLUX identity is exact
             out = stub.eager_attention_forward(mask, B, D, q, k, v)
@@ -130,33 +138,38 @@ def gate_B():
             if whole:
                 ref_probs = dense + lam * (entmax15(w, dim=-1) - dense)
             else:
-                sub = w[..., lo:hi]
-                m = dense[..., lo:hi].sum(-1, keepdim=True)
-                ref_probs[..., lo:hi] = m * (
-                    lam * entmax15(sub, dim=-1) + (1 - lam) * torch.softmax(sub, dim=-1)
-                )
+                for lo, hi in blocks:
+                    sub = w[..., lo:hi]
+                    m = dense[..., lo:hi].sum(-1, keepdim=True)
+                    ref_probs[..., lo:hi] = m * (
+                        lam * entmax15(sub, dim=-1) + (1 - lam) * torch.softmax(sub, dim=-1)
+                    )
             ks = k[:, :, :, None, :].expand(B, k_len, KVH, H // KVH, D).reshape(B, k_len, H, D)
             vs = v[:, :, :, None, :].expand(B, k_len, KVH, H // KVH, D).reshape(B, k_len, H, D)
             ref = torch.matmul(ref_probs.to(vs.dtype), vs.permute(0, 2, 1, 3))
             ref = ref.permute(0, 2, 1, 3).reshape(B, -1, H * D)
             assert torch.allclose(out, ref, atol=1e-6), f"B: {kind} lam={lam} != FLUX/PLADIS form"
-    print("PASS gate B: all five kinds match the FLUX mass-preserving / plain PLADIS form")
+    print("PASS gate B: all seven kinds match the FLUX mass-preserving / plain PLADIS form")
 
 
 def gate_C():
-    for kind, lo, hi, k_len in (
-        ("text", NI, NI + NL_A, P_A),
-        ("self", P_A, P_A + S, P_A + S),
+    for kind, blocks, k_len in (
+        ("text", [(NI, NI + NL_A)], P_A),
+        ("self", [(P_A, P_A + S)], P_A + S),
+        # multi-block: EACH block's mass must be preserved independently
+        ("cams", [(0, NI // 2), (NI // 2, NI)], P_A),
+        ("text-image", [(0, NI), (NI, NI + NL_A)], P_A),
     ):
         install_pladis(_StubExpert(), pladis_scale=1.5, kind=kind, n_img=NI, n_state_tokens=NS)
         q, k, v = mk_qkv(S, k_len, seed=2)
         w = scores_of(_StubExpert(), q, k, mk_mask(S, k_len))
         dense = torch.softmax(w, dim=-1)
-        out = _blend_rows(w, lo, hi, False)
+        out = _blend_rows(w, blocks, False)
         assert torch.allclose(out.sum(-1), torch.ones_like(out.sum(-1)), atol=1e-5), f"C: rows {kind}"
-        assert torch.allclose(
-            out[..., lo:hi].sum(-1), dense[..., lo:hi].sum(-1), atol=1e-5
-        ), f"C: block mass {kind}"
+        for lo, hi in blocks:
+            assert torch.allclose(
+                out[..., lo:hi].sum(-1), dense[..., lo:hi].sum(-1), atol=1e-5
+            ), f"C: block mass {kind} [{lo}:{hi}]"
         assert out[..., NI + 4 : NI + 6].abs().max() < 1e-6, f"C: masked cols {kind}"
     print("PASS gate C: rows sum to 1, block mass preserved, masked columns stay 0")
 
@@ -202,6 +215,12 @@ def gate_E():
     try:
         install_pladis(stub, qgroup="state")
         raise AssertionError("E: qgroup=state did NOT raise")
+    except ValueError:
+        pass
+    # width-1 state block = bit-exact no-op arm (2026-08-02): install must refuse it
+    try:
+        install_pladis(stub, pladis_scale=1.5, kind="state", n_img=NI, n_state_tokens=1)
+        raise AssertionError("E: kind=state with 1 state token did NOT raise")
     except ValueError:
         pass
     # assert_delivered: kind='self' must not count CA hits

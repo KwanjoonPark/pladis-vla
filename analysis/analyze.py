@@ -107,19 +107,23 @@ MODELS = {
     # + the on-ckpt delivery smoke); a base0 arm would burn 1,537×4 episodes re-proving
     # a gate assertion (dropped 2026-08-02, mirroring the pi05 decision above).
     # No qgroup axis either (suffix is action-only): every arm is action-row × <keys>,
-    # tags from sweep_smolvla_language.sh. axt/axi is the cross-model locus pair
-    # (GR00T a×t/a×i, pi05 text/image); axs is the key-side dual of GR00T's state-QUERY
-    # arms; axpfx = whole cross row (GR00T allxall analogue); axself = SA suffix rows,
-    # the one locus with no GR00T/pi05 counterpart.
+    # tags from sweep_smolvla_language.sh. All arms are MASS-PRESERVING (operator
+    # decision 2026-08-02 — the plain whole-row axpfx was dropped for moving mass
+    # across modality borders): axt/axi is the cross-model locus pair (GR00T a×t/a×i,
+    # pi05 text/image); axcam = image sharpened per camera (each camera's mass fixed —
+    # vs axi, which lets mass move between cameras); axti = text+image each mass-fixed
+    # (the maximal mass-preserving prefix arm; state is width 1 where MP = identity).
+    # No axs arm: state is ONE prefix key token and the mass-preserving blend on a
+    # width-1 block is a bit-exact identity (attn_smolvla install guard, 2026-08-02).
     "smolvla": {
         "tag": "smolvla",
-        "arms": ["vanilla", "axt", "axi", "axs", "axpfx", "axself"],
+        "arms": ["vanilla", "axt", "axi", "axcam", "axti"],
         "key_contrasts": [
             ("axt", "axi"),                       # THE locus contrast
             ("axt", "vanilla"), ("axi", "vanilla"),
-            ("axs", "vanilla"),
-            ("axpfx", "vanilla"), ("axpfx", "axt"),
-            ("axself", "vanilla"),
+            ("axcam", "vanilla"), ("axcam", "axi"),   # per-camera vs whole-image MP
+            ("axti", "vanilla"), ("axti", "axt"),     # composition vs its parts
+            ("axti", "axi"),
         ],
         "locus_pair": ("axt", "axi"),
         "suite_contrasts": [("axt", "axi"), ("axt", "vanilla"), ("axi", "vanilla")],

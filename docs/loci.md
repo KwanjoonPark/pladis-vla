@@ -151,9 +151,21 @@ also covers.
   pass (q == k) of each inference and exact-fits every denoise call
   (`pladis/attn_smolvla.py`), so both paddings are served by one code path.
 - Queries are action tokens only (suffix = action+timestep MLP; state is a
-  prefix KEY) → **no qgroup axis** (`state` raises). `kind` gains `state`
-  (key-side state — the dual of GR00T's state-query arms), `prefix`
-  (whole CA row = GR00T allxall analogue), and `self` (SA suffix block).
+  prefix KEY) → **no qgroup axis** (`state` raises). `kind` gains `prefix`
+  (whole CA row = GR00T allxall analogue), `self` (SA suffix block), and two
+  MULTI-BLOCK mass-preserving kinds (2026-08-02, operator decision that every
+  sweep arm must preserve modality mass): `cams` = the image span split
+  per camera ([camera1 64 | camera2 64] = [agentview | wrist] in the ckpt
+  preprocessor's feature order), each half sharpened with its OWN mass fixed;
+  `text-image` = text and image blocks each mass-fixed — the maximal
+  mass-preserving prefix intervention (the sweep replaces the plain
+  whole-row `prefix` arm with it; `prefix` stays available as the one kind
+  that can move mass across block borders).
+  `kind=state` exists in the vocabulary but is REFUSED at install for real
+  SmolVLA checkpoints: state is ONE prefix token, and the mass-preserving
+  blend on a width-1 block is a bit-exact identity (entmax over one column
+  is 1 and m is the dense entry itself) — a no-op arm the Phase-D
+  diagnostic caught before it burned a sweep (2026-08-02).
 - Sub-block kinds use the FLUX mass-preserving blend; `prefix` uses the
   plain whole-row blend. Noise-pin admissible: `sample_noise` =
   global `torch.normal` (modeling_smolvla.py:609).

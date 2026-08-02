@@ -8,10 +8,20 @@
 # SA layers key = [prefix|suffix]. Arms below put lambda=1.5 (official
 # recommended regime; the GR00T dose row peaked there) on each locus:
 #   vanilla
-#   axt   = kind=text    (a x t)        axi = kind=image (a x i)
-#   axs   = kind=state   (a x state-key: NEW cell, GR00T s-arms' dual)
-#   axpfx = kind=prefix  (a x all cross columns = GR00T allxall analogue)
-#   axself= kind=self    (a x action self-attn: NEW cell)
+#   axt   = kind=text        (a x t, text block mass fixed)
+#   axi   = kind=image       (a x i, image block mass fixed; mass may move
+#                             BETWEEN cameras inside the image span)
+#   axcam = kind=cams        (a x i split per camera: camera1/camera2 each
+#                             sharpened with its OWN mass fixed)
+#   axti  = kind=text-image  (text AND image blocks, each mass fixed — the
+#                             maximal mass-preserving prefix intervention;
+#                             replaces the old plain whole-row axpfx arm,
+#                             operator decision 2026-08-02: every arm preserves
+#                             modality mass)
+# NO axs arm (2026-08-02): state is ONE prefix key token and mass preservation
+# on a width-1 block is a bit-exact identity — install_pladis raises on it.
+# NO axself arm in this round (operator arm list 2026-08-02); the driver is
+# resume-safe, so it can be appended later without disturbing completed arms.
 #
 # NO base0 arm (dropped 2026-08-02): smolvla has no fused/eager duality — the one
 # eager kernel (smolvlm_with_expert.py:504) makes the hook's lambda=0 the stock
@@ -61,10 +71,9 @@ run() { # $1=tag, rest = pladis args
 }
 
 run vanilla
-run axt    --pladis-install --pladis-scale 1.5 --pladis-kind text
-run axi    --pladis-install --pladis-scale 1.5 --pladis-kind image
-run axs    --pladis-install --pladis-scale 1.5 --pladis-kind state
-run axpfx  --pladis-install --pladis-scale 1.5 --pladis-kind prefix
-run axself --pladis-install --pladis-scale 1.5 --pladis-kind self
+run axt   --pladis-install --pladis-scale 1.5 --pladis-kind text
+run axi   --pladis-install --pladis-scale 1.5 --pladis-kind image
+run axcam --pladis-install --pladis-scale 1.5 --pladis-kind cams
+run axti  --pladis-install --pladis-scale 1.5 --pladis-kind text-image
 
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

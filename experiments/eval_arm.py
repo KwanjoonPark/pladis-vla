@@ -104,13 +104,16 @@ def parse_args():
     p.add_argument("--pladis-qgroup", default="all", choices=["all", "state", "action"],
                    help="gr00t_n17 only: query row group (pi0.5's suffix is action-only)")
     p.add_argument("--pladis-kind", default="all",
-                   choices=["all", "text", "image", "prefix", "state", "self"],
+                   choices=["all", "text", "image", "prefix", "state", "self",
+                            "cams", "text-image"],
                    help="key group. gr00t_n17: which cross blocks (all|text|image). "
                         "pi05: which key sub-block of the joint-attention row "
                         "('prefix' = the whole conditioning span as one "
                         "mass-preserving block). smolvla: CA key sub-block "
-                        "(text|image|state|prefix) or 'self' = SA layers. Each hook "
-                        "rejects kinds outside its own set at install")
+                        "(text|image), multi-block mass-preserving 'cams' "
+                        "(per-camera) / 'text-image', whole-row 'prefix', or "
+                        "'self' = SA layers. Each hook rejects kinds outside its "
+                        "own set at install")
     p.add_argument("--pladis-cells", default=None,
                    help="gr00t_n17 only: comma-separated {qgroup}x{kind} cells with "
                         "per-kind qgroups (e.g. actionxtext,stateximage); overrides "
@@ -190,6 +193,12 @@ def parse_args():
     # (Kinds outside a hook's own set are rejected by that hook at install.)
     _SMOLVLA_GEOM_DEFAULTS = (128, 48)
     if args.model == "pi05":
+        if args.pladis_kind in ("cams", "text-image", "state", "self"):
+            raise SystemExit(
+                "[arm] --pladis-kind cams/text-image/state/self is smolvla-only; "
+                "pi05 kinds are text|image|prefix|all (attn_pi05 rejects the rest "
+                "only AFTER the model load)."
+            )
         if args.pladis_qgroup != "all":
             raise SystemExit(
                 "[arm] --pladis-qgroup is gr00t_n17-only: pi0.5's suffix is action-only "
@@ -206,11 +215,11 @@ def parse_args():
                 "(pi05 geometry flags: --pladis-n-img-prefix/--pladis-n-lang)."
             )
     elif args.model == "gr00t_n17":
-        if args.pladis_kind in ("prefix", "state", "self"):
+        if args.pladis_kind not in ("all", "text", "image"):
             raise SystemExit(
-                "[arm] --pladis-kind prefix/state/self is pi05/smolvla-only (they name "
-                "key-column spans of a joint-attention row; gr00t_n17 selects whole "
-                "cross blocks: all|text|image — its state axis is --pladis-qgroup)."
+                "[arm] gr00t_n17 selects whole cross blocks: --pladis-kind all|text|"
+                "image (its state axis is --pladis-qgroup). Other kinds name key-"
+                "column spans of a joint/prefix row and are pi05/smolvla-only."
             )
         if (args.pladis_n_img, args.pladis_n_lang_max) != _SMOLVLA_GEOM_DEFAULTS:
             raise SystemExit("[arm] --pladis-n-img/--pladis-n-lang-max are smolvla-only.")
@@ -227,8 +236,9 @@ def parse_args():
             # and the sweep would already have paid one load per suite (bug B1).
             raise SystemExit(
                 "[arm] smolvla needs an explicit --pladis-kind in "
-                "{text,image,state,prefix,self} — 'all' is gr00t_n17/pi05 vocabulary. "
-                "The whole-cross-row analogue is --pladis-kind prefix."
+                "{text,image,cams,text-image,prefix,self} — 'all' is gr00t_n17/pi05 "
+                "vocabulary. The mass-preserving whole-prefix arm is 'text-image'; "
+                "'prefix' is the plain whole-row blend."
             )
         if (args.pladis_n_img_prefix, args.pladis_n_lang,
                 args.pladis_max_suffix_query) != (768, 200, 100):
