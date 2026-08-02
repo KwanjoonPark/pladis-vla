@@ -22,7 +22,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -76,6 +76,7 @@ def run_episode(
     video_dir: Optional[str] = None,
     video_label: str = "",
     video_suite: str = "",
+    instruction_map: Optional[Callable[[EpisodeSpec], str]] = None,
 ) -> EpisodeResult:
     """model: a ModelAdapter (harness/model_base.py).
     exec_horizon: execute only the first k actions of each predicted chunk
@@ -83,9 +84,17 @@ def run_episode(
     of 16; None executes the full chunk.
     video_dir: when set, record agentview+wrist (model's view) to one mp4 per
     episode — observation consumer only, never perturbs the model/RNG path.
-    video_label: model/arm tag burned into the video header (ASCII)."""
+    video_label: model/arm tag burned into the video header (ASCII).
+    instruction_map: when set, REPLACES the env's instruction with
+    instruction_map(spec) before anything consumes it (eval_arm
+    --instruction-source task-meta, axis=none only — eval_arm.py enforces the
+    restriction). The eplog `instruction` column below still records whatever
+    string was actually delivered to the model, so the contract "delivery is
+    data, not assumption" survives the override."""
     t0 = time.time()
     raw_obs, instruction = sess.reset(spec, init_states)
+    if instruction_map is not None:
+        instruction = instruction_map(spec)
     video = None
     if video_dir is not None:
         # "(suite - marker)" prefixes the DISPLAYED instruction only; the

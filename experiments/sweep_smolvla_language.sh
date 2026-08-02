@@ -1,25 +1,49 @@
 #!/bin/bash
-# SmolVLA (HuggingFaceVLA/smolvla_libero) x LIBERO-plus language axis, FULL
-# curated set: four suites, 1,537 episodes per arm, seed-0 paired schedule —
+# SmolVLA (lerobot/smolvla_libero, org-official ckpt) x LIBERO-plus language axis,
+# FULL curated set: four suites, 1,537 episodes per arm, seed-0 paired schedule —
 # the SmolVLA counterpart of sweep_n17_language.sh (same axis, same pairing).
 # One checkpoint serves all suites (per_suite=False in the registry).
 #
 # Loci (see pladis/attn_smolvla.py): CA layers key = [image|language|state],
 # SA layers key = [prefix|suffix]. Arms below put lambda=1.5 (official
 # recommended regime; the GR00T dose row peaked there) on each locus:
-#   vanilla / base0 (hook, lambda=0, bit-parity control)
+#   vanilla
 #   axt   = kind=text    (a x t)        axi = kind=image (a x i)
 #   axs   = kind=state   (a x state-key: NEW cell, GR00T s-arms' dual)
 #   axpfx = kind=prefix  (a x all cross columns = GR00T allxall analogue)
 #   axself= kind=self    (a x action self-attn: NEW cell)
+#
+# NO base0 arm (dropped 2026-08-02): smolvla has no fused/eager duality — the one
+# eager kernel (smolvlm_with_expert.py:504) makes the hook's lambda=0 the stock
+# softmax op, bit-parity held by verify_smolvla_hook.py + the on-ckpt delivery
+# smoke, so base0 == vanilla and would burn 1,537 x 4 episodes re-proving a gate
+# assertion — the same call the pi05 track made (analysis/analyze.py MODELS note).
+#
+# Step caps are PER-SUITE, aligned to lerobot's own LIBERO eval protocol
+# (lerobot envs/libero.py: spatial 280 / object 280 / goal 300 / long 520) —
+# the 2026-08-02 anchor protocol uses the same caps (external validity; also
+# roughly halves failure-episode wall time vs the old 720). Arms share the
+# identical seed-0 schedule, so the cap cancels in every arm-vs-arm contrast.
+# Instructions stay the BDDL parse (--instruction-source default): on the
+# language axis the instruction IS the perturbation.
+#
 # PRE-LAUNCH GATES (run once before this driver, results reviewed):
-#   verify_smolvla_hook.py (CPU) + delivery smoke + anchor exec-horizon pick.
+#   verify_smolvla_hook.py (CPU) + official-ckpt delivery smoke + 2ep per-arm smoke.
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 mkdir -p results/sweep
 . experiments/load_machine_env.sh
 pladis_require_clean_tree
 SUITES="libero_10 libero_goal libero_object libero_spatial"
+
+cap_of() { # lerobot envs/libero.py per-suite max_steps
+  case "$1" in
+    libero_spatial|libero_object) echo 280 ;;
+    libero_goal)                  echo 300 ;;
+    libero_10)                    echo 520 ;;
+    *) echo "[sweep] unknown suite $1" >&2; exit 2 ;;
+  esac
+}
 
 run() { # $1=tag, rest = pladis args
   local tag="$1"; shift
@@ -28,6 +52,7 @@ run() { # $1=tag, rest = pladis args
     echo "[sweep] === $tag / $S ($(date +%H:%M:%S)) ==="
     bash experiments/run.sh --venv lerobot experiments/eval_arm.py \
       --model smolvla --suite "$S" --axis language --episodes 0 --seed 0 \
+      --max-steps "$(cap_of "$S")" \
       --out "$out" \
       --video-dir "results/sweep/videos/smolvla_lang_${tag}_${S}" "$@" \
       > "results/sweep/smolvla_lang_${tag}_${S}.out" 2>&1
@@ -36,7 +61,6 @@ run() { # $1=tag, rest = pladis args
 }
 
 run vanilla
-run base0  --pladis-install --pladis-scale 0
 run axt    --pladis-install --pladis-scale 1.5 --pladis-kind text
 run axi    --pladis-install --pladis-scale 1.5 --pladis-kind image
 run axs    --pladis-install --pladis-scale 1.5 --pladis-kind state

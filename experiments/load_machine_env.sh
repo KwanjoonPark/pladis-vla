@@ -24,11 +24,12 @@ fi
 : "${MODEL_ROOT_GR00T_N17:=$WS/models/GR00T-N1.7-LIBERO}"
 : "${MODEL_ROOT_PI0:=$WS/models/RLinf-Pi0-LIBERO-Long-SFT}"
 : "${MODEL_ROOT_PI05:=$WS/models/pi05_libero}"
+: "${MODEL_ROOT_SMOLVLA:=$WS/models/smolvla_libero_official}"
 
 export REPO WS \
   PLADIS_VENV_GR00T PLADIS_VENV_OPENPI PLADIS_VENV_LEROBOT \
   PLADIS_HF_TOKEN_FILE PLADIS_MAGICK_HOME PLADIS_RLINF_PATH \
-  MODEL_ROOT_GR00T_N17 MODEL_ROOT_PI0 MODEL_ROOT_PI05
+  MODEL_ROOT_GR00T_N17 MODEL_ROOT_PI0 MODEL_ROOT_PI05 MODEL_ROOT_SMOLVLA
 
 # Sweeps must run from committed code so every eplog is attributable to a
 # commit (the run's `git describe` lands in the .arm sidecar). Call this at

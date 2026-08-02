@@ -123,7 +123,12 @@ silently, which is why several of them are enforced as hard errors rather than d
 - **The instruction is data, not assumption.** It always comes from
   `env.language_instruction` (liberoplus's own BDDL parse) and is written to the eplog
   per episode. Never source it from task-suite metadata — that was the upstream bug
-  that silently evaluated original instructions on the language axis.
+  that silently evaluated original instructions on the language axis. One carve-out
+  (2026-08-02): `eval_arm.py --instruction-source task-meta` substitutes the
+  training-distribution filename parse, for checkpoints (smolvla) fine-tuned on those
+  strings where the BDDL parse is OOD phrasing that voids paper comparability. It is
+  hard-restricted to `--axis none` (eval_arm raises otherwise), recorded in the arm
+  signature, and the eplog still logs the string actually delivered.
 - **Layout is scene-altering** (`SCENE_ALTERING_AXES`): base-task init states must not
   be applied there, or the perturbation is silently reverted. Fixtures live in
   `model.body_pos`, outside `sim.get_state()`, so determinism checks must compare

@@ -4,19 +4,23 @@
   python analysis/analyze.py --language              # n17_lang_*    (7 arms x 1,537 eps)
   python analysis/analyze.py --robot                 # n17_robot_*   (7 arms x 1,550 eps)
   python analysis/analyze.py --model pi05 --language  # pi05_lang_*  (4 arms x 1,537 eps)
+  python analysis/analyze.py --model smolvla --language  # smolvla_lang_* (6 arms)
 
 Pairing: identical seed-0 schedule across arms -> pair by (suite, episode);
 task_name equality is asserted. Test = paired McNemar, z = (n01-n10)/sqrt(disc).
 Baseline severity uses <model>_orig_vanilla_* (per-base-task mean over init 0-9).
 Read-only; writes nothing.
 
-The two tracks study different design spaces, so the arm names and contrasts live in
+The tracks study different design spaces, so the arm names and contrasts live in
 MODELS below rather than being hardcoded:
   * n17  — query group x key modality, a 2x2 grid ({state,action} x {text,image}).
   * pi05 — key sub-block only. pi0.5's suffix is action-only (pi05_libero sets
     discrete_state_input=False), so the query axis collapses and every arm is
     action-row x <keys>. `text` is the direct port of the official FLUX intervention;
     `image` is the contrast with no upstream precedent.
+  * smolvla — key sub-block over the CA row [image|language|state] (query axis
+    collapses like pi05), plus `self` = the SA suffix rows, a locus the other
+    tracks cannot express (their action self-attention is not hooked).
 
 Metric: `success_once`, the protocol's primary (README S2). Rollouts stop on
 first contact with success, so success_at_end is evaluated at that same sim
@@ -96,6 +100,30 @@ MODELS = {
             ("text20", "vanilla"), ("image20", "vanilla"),
             ("text20", "text15"), ("image20", "image15"),
         ],
+    },
+    # smolvla: like pi05, VANILLA IS THE REFERENCE and there is NO base0 arm — the track
+    # has a single eager attention kernel (no SDPA anywhere in smolvlm_with_expert.py),
+    # so the hook's λ=0 is the stock softmax op (verify_smolvla_hook.py bit-parity gate
+    # + the on-ckpt delivery smoke); a base0 arm would burn 1,537×4 episodes re-proving
+    # a gate assertion (dropped 2026-08-02, mirroring the pi05 decision above).
+    # No qgroup axis either (suffix is action-only): every arm is action-row × <keys>,
+    # tags from sweep_smolvla_language.sh. axt/axi is the cross-model locus pair
+    # (GR00T a×t/a×i, pi05 text/image); axs is the key-side dual of GR00T's state-QUERY
+    # arms; axpfx = whole cross row (GR00T allxall analogue); axself = SA suffix rows,
+    # the one locus with no GR00T/pi05 counterpart.
+    "smolvla": {
+        "tag": "smolvla",
+        "arms": ["vanilla", "axt", "axi", "axs", "axpfx", "axself"],
+        "key_contrasts": [
+            ("axt", "axi"),                       # THE locus contrast
+            ("axt", "vanilla"), ("axi", "vanilla"),
+            ("axs", "vanilla"),
+            ("axpfx", "vanilla"), ("axpfx", "axt"),
+            ("axself", "vanilla"),
+        ],
+        "locus_pair": ("axt", "axi"),
+        "suite_contrasts": [("axt", "axi"), ("axt", "vanilla"), ("axi", "vanilla")],
+        "cat_contrasts": [("axt", "axi")],
     },
 }
 

@@ -37,10 +37,13 @@ blend — a full row is already a normalized distribution.
 ``qgroup`` is accepted for API symmetry with the other hooks: the suffix has
 no state query row, so ``state`` raises and ``action`` == ``all``.
 
-GEOMETRY IS SELF-CALIBRATING. The checkpoint tokenizes the instruction with
-``padding="longest"`` (policy_preprocessor.json tokenizer step), so the
-language block width varies per episode (≤ ``n_lang_max``); a static layout
-cannot be exact. Every inference begins with the VLM prefix pass
+GEOMETRY IS SELF-CALIBRATING. Language padding differs per checkpoint: the
+registry default ``lerobot/smolvla_libero`` pads to ``max_length`` 48
+(``pad_language_to`` in its config → CONSTANT prefix 177 = 128 img + 48 lang
++ 1 state; 16 expert layers = 8 SA even-idx + 8 CA odd-idx), while
+``HuggingFaceVLA/smolvla_libero`` pads ``longest`` (variable ≤48; 32 layers).
+One static layout cannot serve both, so the hook derives the live width
+per inference. Every inference begins with the VLM prefix pass
 (``sample_actions`` → ``fill_kv_cache=True``), whose calls have
 ``q_len == key_len == prefix_len``: the hook records that length, then
 classifies each denoise call as CA (``key == prefix_len``) or SA
@@ -275,19 +278,26 @@ def make_pladis_eager_attention_forward(model):
 
 
 def _find_vlm_with_expert(model):
-    """Accept a SmolVLAPolicy, its .model (VLAFlowMatching), or the
-    SmolVLMWithExpertModel itself."""
-    for obj in (model, getattr(model, "model", None)):
-        if obj is None:
-            continue
-        if hasattr(obj, "eager_attention_forward") and hasattr(obj, "get_attention_interface"):
-            return obj
-        inner = getattr(obj, "vlm_with_expert", None)
-        if inner is not None and hasattr(inner, "eager_attention_forward"):
-            return inner
+    """Accept the harness SmolVLAAdapter (.policy), a SmolVLAPolicy, its .model
+    (VLAFlowMatching), or the SmolVLMWithExpertModel itself.
+
+    The .policy hop matches the other tracks' convention — eval_arm hands every
+    hook the ADAPTER, not the bare policy (found 2026-08-02 by the first
+    eval_arm-routed delivery smoke; the 07-28 smoke installed on the policy
+    directly and never exercised this path)."""
+    for outer in (model, getattr(model, "policy", None)):
+        for obj in (outer, getattr(outer, "model", None)):
+            if obj is None:
+                continue
+            if hasattr(obj, "eager_attention_forward") and hasattr(obj, "get_attention_interface"):
+                return obj
+            inner = getattr(obj, "vlm_with_expert", None)
+            if inner is not None and hasattr(inner, "eager_attention_forward"):
+                return inner
     raise TypeError(
         "install_pladis(model): could not locate a SmolVLMWithExpertModel "
-        "(expected a SmolVLAPolicy, its .model, or the vlm_with_expert module)."
+        "(expected a SmolVLAAdapter, a SmolVLAPolicy, its .model, or the "
+        "vlm_with_expert module)."
     )
 
 

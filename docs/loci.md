@@ -113,24 +113,43 @@ same code path and no eager-dense control arm is needed.
 ## 3. SmolVLA — interleaved CA/SA over a joint-key prefix [implemented]
 
 Measured against lerobot 0.4.4 (`smolvlm_with_expert.py`) and verified on the
-`HuggingFaceVLA/smolvla_libero` checkpoint (delivery smoke, 2026-07-27):
+REGISTRY-DEFAULT checkpoint `lerobot/smolvla_libero`
+(`models/smolvla_libero_official`; delivery smoke through eval_arm,
+2026-08-02). The earlier `HuggingFaceVLA/smolvla_libero` numbers
+(2026-07-27) are kept below as the secondary geometry the self-calibration
+also covers.
 
+- **Checkpoint lineage** (train_config.json): `lerobot/smolvla_libero` is the
+  org-official RETRAIN by pepijn223 on `lerobot/libero` (the port of the
+  paper's PI dataset, 1,693 eps) at 25k steps / bs32 — 1/8 the paper's
+  compute (100k / bs64). The paper's own Table-2 weights were never released
+  (community non-repro on record: lerobot#1369). Its config sets
+  `n_action_steps=50` (open-loop full chunk — the paper's own k=50 ablation
+  collapses to 51.8); our protocol overrides to exec 10. A camera3 exists in
+  the config but no third camera is in the batch, so only 2 are embedded —
+  the P==177 assert below re-verifies that coincidence on every inference.
 - All attention flows through ONE function, `eager_attention_forward`
   (:504-548; `get_attention_interface` :500 resolves
   `self.eager_attention_forward`, so an INSTANCE attribute shadows it —
-  the hook patches one served instance, nothing global).
-- Layer types (`attention_mode="cross_attn"`, `self_attn_every_n_layers=2`,
-  32 expert layers = 16 SA + 16 CA, both measured at 160 hook fires per
-  10-step denoise):
+  the hook patches one served instance, nothing global; the finder accepts
+  the harness adapter via its `.policy` hop, found 2026-08-02).
+- Layer types (`attention_mode="cross_attn"`, `self_attn_every_n_layers=2`):
+  official ckpt = 16 expert layers = **8 SA (even `layer_idx`) + 8 CA (odd)**,
+  census per 10-step chunk: 16 prefix-pass calls + **80 CA + 80 SA** denoise
+  calls = 176 (delivery smoke: kind=text fires CA=80/SA=0, kind=self
+  CA=0/SA=80). (HFVLA ckpt: 32 layers = 16+16, 160 fires per chunk.)
   * CA (odd `layer_idx`): expert re-projects the cached VLM prefix K/V
     (:342-365) — key axis `[image | language | state]`, NO suffix columns.
-  * SA (`layer_idx % 2 == 0`): suffix K/V concatenated onto cached prefix
+  * SA (even): suffix K/V concatenated onto cached prefix
     K/V (:264-266) — key axis `[prefix | suffix]`, a π0.5-style joint row.
-- Prefix layout measured: `n_img = 128` (2 cameras × 64 connector tokens,
-  probed exactly: prefix_len 141 = 128 + 12 lang + 1 state), `n_state = 1`.
-  The language width is PER-EPISODE (tokenizer `padding="longest"`, ≤48) —
-  the hook self-calibrates from the prefix pass (q == k) of each inference
-  and exact-fits every denoise call against it (`pladis/attn_smolvla.py`).
+- Prefix layout: `n_img = 128` (2 cameras × 64 connector tokens),
+  `n_state = 1`. Official ckpt pads language to `max_length` 48
+  (`pad_language_to`) → **prefix_len is the CONSTANT 177 = 128 + 48 + 1**,
+  with n_lang=48 sitting exactly at the n_lang_max bound (delivery smoke
+  asserts 177 every inference). HFVLA pads `longest` → per-episode width
+  (probed: 141 = 128 + 12 + 1). The hook self-calibrates from the prefix
+  pass (q == k) of each inference and exact-fits every denoise call
+  (`pladis/attn_smolvla.py`), so both paddings are served by one code path.
 - Queries are action tokens only (suffix = action+timestep MLP; state is a
   prefix KEY) → **no qgroup axis** (`state` raises). `kind` gains `state`
   (key-side state — the dual of GR00T's state-query arms), `prefix`
@@ -139,8 +158,17 @@ Measured against lerobot 0.4.4 (`smolvlm_with_expert.py`) and verified on the
   plain whole-row blend. Noise-pin admissible: `sample_noise` =
   global `torch.normal` (modeling_smolvla.py:609).
 - Gates: `verify_smolvla_hook.py` (CPU, 7 gates incl. bit-parity vs stock
-  and self-calibration) + on-checkpoint delivery smoke (λ0 bit-equal
-  vanilla; text→CA-only, self→SA-only firing) — both ALL PASS.
+  and self-calibration) + on-checkpoint delivery smoke THROUGH eval_arm
+  (`--pladis-install --pladis-kind text|self`, 2 eps each: census above,
+  prefix_len=177, `_assert_smolvla_delivery` before any episode logs) —
+  ALL PASS on the official ckpt, 2026-08-02.
+- Instruction protocol (2026-08-02): anchors (`--axis none`) use
+  `--instruction-source task-meta` — the filename-derived training strings
+  (verified equal to `libero.benchmark task_maps[*].language` on all 40
+  tasks); the BDDL parse is OOD phrasing for this checkpoint and collapsed
+  the old anchors (spatial 41→87 on the instruction swap alone, disc 47:1,
+  z=+6.6; stack parity vs lerobot-eval z=0.77 n.s.). LIBERO-plus sweep arms
+  keep the BDDL parse — on the language axis it IS the perturbation.
 
 ## 4. GR00T N1.5 — dedicated cross-attention with fused-VL keys [planned]
 

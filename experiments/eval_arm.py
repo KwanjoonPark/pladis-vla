@@ -32,6 +32,10 @@ vars. Omitting --pladis-install gives vanilla.
     base0 is likewise bit-identical (verify_pi05_hook.py gate A). pi0.5's suffix is
     action-only, so the qgroup axis does not exist there; the locus axis is --pladis-kind
     over the key sub-blocks (text / image / prefix / all).
+  * smolvla: same situation as pi05 — a single eager kernel (no SDPA anywhere in
+    smolvlm_with_expert.py), lambda=0 is the stock softmax op (verify_smolvla_hook.py
+    bit-parity gate), so no base0 arm exists in its driver. Locus axis is --pladis-kind
+    over the CA key sub-blocks (text / image / state / prefix) or the SA rows (self).
 
 
 Resume: episodes already in --out are skipped (eplog is the ledger).
@@ -85,6 +89,16 @@ def parse_args():
                    help="execute first k of each chunk (gr00t_n17 official: 8)")
     p.add_argument("--video-dir", default=None,
                    help="record one mp4 (agentview+wrist) per episode into this dir")
+    p.add_argument("--instruction-source", default="bddl",
+                   choices=["bddl", "task-meta"],
+                   help="where the episode instruction comes from. 'bddl' (default): "
+                        "liberoplus's own BDDL parse via env.language_instruction — "
+                        "the harness contract for every perturbation axis. "
+                        "'task-meta': the training-distribution string parsed from the "
+                        "task FILENAME (libero benchmark grab_language_from_filename), "
+                        "--axis none only — for checkpoints fine-tuned on filename-"
+                        "derived strings, where the BDDL parse is out-of-distribution "
+                        "phrasing (smolvla anchor protocol, 2026-08-02)")
     p.add_argument("--pladis-install", action="store_true")
     p.add_argument("--pladis-scale", type=float, default=0.0)
     p.add_argument("--pladis-qgroup", default="all", choices=["all", "state", "action"],
@@ -128,6 +142,16 @@ def parse_args():
     p.add_argument("--pladis-max-suffix-query", type=int, default=100,
                    help="pi05 only: only blend forwards whose query length is <= this, "
                         "so the large-query prefix VLM pass stays dense")
+    # smolvla key-axis geometry: CA key = [image(0:ni) | language(ni:ni+nl_live) | state].
+    # Defaults are the official lerobot/smolvla_libero layout — 2 cams x 64 tokens = 128,
+    # tokenizer_max_length 48 (fixed "max_length" padding => static prefix 177 = 128+48+1).
+    # The live language width is derived per inference from the recorded prefix pass;
+    # these two locate/bound it and are re-validated at run time (attn_smolvla.py
+    # _geometry raises on mismatch) and by the delivery assert below.
+    p.add_argument("--pladis-n-img", type=int, default=128,
+                   help="smolvla only: width of the CA image key block")
+    p.add_argument("--pladis-n-lang-max", type=int, default=48,
+                   help="smolvla only: upper bound of the derived language block width")
     args = p.parse_args()
 
     if args.pladis_method is None:
@@ -150,10 +174,21 @@ def parse_args():
     if args.pladis_n_state_tokens is None:
         args.pladis_n_state_tokens = spec.default_n_state_tokens
 
+    # The BDDL-parsed instruction IS the perturbation on the language axis (README:
+    # the RLinf bug that silently evaluated original instructions is why the contract
+    # exists), so the task-meta override is hard-restricted to unperturbed anchors.
+    if args.instruction_source != "bddl" and args.axis != "none":
+        raise SystemExit(
+            "[arm] --instruction-source task-meta is restricted to --axis none: on a "
+            "perturbation axis the BDDL parse is the treatment, and overriding it would "
+            "run original instructions while the eplog claims a perturbed arm."
+        )
+
     # Reject cross-track flag combinations BEFORE the model load (30s+) — and before an
     # arm can start. Same spirit as the hooks' own empty-install guards: an arm whose
     # locus flags do not mean what the operator thinks must never consume a sweep.
     # (Kinds outside a hook's own set are rejected by that hook at install.)
+    _SMOLVLA_GEOM_DEFAULTS = (128, 48)
     if args.model == "pi05":
         if args.pladis_qgroup != "all":
             raise SystemExit(
@@ -165,11 +200,41 @@ def parse_args():
             raise SystemExit("[arm] --pladis-cells is gr00t_n17-only (per-kind qgroups).")
         if args.pladis_n_state_tokens != 1:
             raise SystemExit("[arm] --pladis-n-state-tokens is gr00t_n17-only.")
-    elif args.model == "gr00t_n17":
-        if args.pladis_kind == "prefix":
+        if (args.pladis_n_img, args.pladis_n_lang_max) != _SMOLVLA_GEOM_DEFAULTS:
             raise SystemExit(
-                "[arm] --pladis-kind prefix is pi05/smolvla-only (it names a key-column "
-                "span of a joint-attention row; gr00t_n17 selects whole cross blocks)."
+                "[arm] --pladis-n-img/--pladis-n-lang-max are smolvla-only "
+                "(pi05 geometry flags: --pladis-n-img-prefix/--pladis-n-lang)."
+            )
+    elif args.model == "gr00t_n17":
+        if args.pladis_kind in ("prefix", "state", "self"):
+            raise SystemExit(
+                "[arm] --pladis-kind prefix/state/self is pi05/smolvla-only (they name "
+                "key-column spans of a joint-attention row; gr00t_n17 selects whole "
+                "cross blocks: all|text|image — its state axis is --pladis-qgroup)."
+            )
+        if (args.pladis_n_img, args.pladis_n_lang_max) != _SMOLVLA_GEOM_DEFAULTS:
+            raise SystemExit("[arm] --pladis-n-img/--pladis-n-lang-max are smolvla-only.")
+    elif args.model == "smolvla":
+        if args.pladis_cells:
+            raise SystemExit("[arm] --pladis-cells is gr00t_n17-only (per-kind qgroups).")
+        if args.pladis_qgroup == "state":
+            raise SystemExit(
+                "[arm] --pladis-qgroup state is invalid for smolvla: the expert suffix "
+                "is action-only; state is a prefix KEY token — use --pladis-kind state."
+            )
+        if args.pladis_install and args.pladis_kind == "all":
+            # attn_smolvla would reject this too, but only AFTER the model load —
+            # and the sweep would already have paid one load per suite (bug B1).
+            raise SystemExit(
+                "[arm] smolvla needs an explicit --pladis-kind in "
+                "{text,image,state,prefix,self} — 'all' is gr00t_n17/pi05 vocabulary. "
+                "The whole-cross-row analogue is --pladis-kind prefix."
+            )
+        if (args.pladis_n_img_prefix, args.pladis_n_lang,
+                args.pladis_max_suffix_query) != (768, 200, 100):
+            raise SystemExit(
+                "[arm] --pladis-n-img-prefix/--pladis-n-lang/--pladis-max-suffix-query "
+                "are pi05-only (smolvla geometry: --pladis-n-img/--pladis-n-lang-max)."
             )
     return args, spec
 
@@ -204,6 +269,31 @@ def _model_tag(model_path: str) -> str:
     return f"{repo}/{sub}"
 
 
+def _task_meta_instruction(base_task: str) -> str:
+    """Training-distribution instruction: the task-FILENAME parse both the LIBERO
+    benchmark loader and lerobot's eval stack feed the policy
+    (libero/benchmark/__init__.py:43-52 ``grab_language_from_filename``, replicated
+    verbatim on ``base_task + ".bddl"`` so no libero import is needed; the upper-case
+    branch strips the LIBERO-100 ``*_SCENE<d>_`` prefix).
+
+    Why it exists (2026-08-02): smolvla checkpoints are fine-tuned on these strings
+    (lerobot/libero ``meta/tasks.parquet``), while liberoplus's BDDL parse phrases the
+    same tasks differently ("pick the akita black bowl ..." vs trained "pick up the
+    black bowl ..."; goal: "open the middle layer of the drawer" vs trained "open the
+    middle drawer of the cabinet") — out-of-distribution phrasing that collapsed the
+    smolvla anchors (spatial 41 vs paper 90). Verified per-suite against the anchor
+    eplogs' instruction column."""
+    x = base_task + ".bddl"
+    if x[0].isupper():  # LIBERO-100
+        if "SCENE10" in x:
+            language = " ".join(x[x.find("SCENE") + 8:].split("_"))
+        else:
+            language = " ".join(x[x.find("SCENE") + 7:].split("_"))
+    else:
+        language = " ".join(x.split("_"))
+    return language[: language.find(".bddl")]
+
+
 def _assert_pi05_delivery(sess, ts, first_spec, model) -> None:
     """Prove the PLADIS blend actually fires, BEFORE logging a single episode.
 
@@ -230,6 +320,34 @@ def _assert_pi05_delivery(sess, ts, first_spec, model) -> None:
     assert_delivered()
     print(f"[arm] PLADIS delivered: {CFG.n_calls} blended forward(s), "
           f"(query_len, key_len) seen = {sorted(CFG.seen_shapes)}", flush=True)
+
+
+def _assert_smolvla_delivery(sess, ts, first_spec, model) -> None:
+    """smolvla counterpart of :func:`_assert_pi05_delivery` — prove the blend fires
+    BEFORE logging a single episode.
+
+    The failure mode it guards: install_pladis binds the replacement to one
+    SmolVLMWithExpertModel INSTANCE (attn_smolvla.py, review F2); a hook bound to an
+    object the serving path never calls raises nothing on its own, and the arm would
+    burn 1,537 episodes as silent vanilla while the .arm sidecar claims an
+    intervention. assert_delivered() (attn_smolvla.py) converts that silence into a
+    hard error; the CA/SA call census printed here is the same evidence the on-ckpt
+    delivery smoke checks (official ckpt: 80 CA or 80 SA blended calls per chunk).
+
+    The warm-up surface differs from pi05's (predict_chunk through the checkpoint's
+    own pre/post processors vs predict_action_batch(mode="eval")) — two explicit
+    branches rather than a ModelSpec hook, same call as _assert_pi05_delivery made.
+    RNG containment is identical: run_episode reseeds the global stream before every
+    chunk (harness/rollout.py) and sess.reset() re-runs for real when the loop
+    starts, so the logged rollout is bit-identical to one without the warm-up."""
+    from pladis.attn_smolvla import CFG, assert_delivered
+
+    raw_obs, instruction = sess.reset(first_spec, ts.init_states_of(first_spec.task_name))
+    with torch.no_grad():
+        model.predict_chunk(model.wrap_obs(raw_obs, instruction))
+    assert_delivered()
+    print(f"[arm] PLADIS delivered: CA={CFG.n_calls_ca} SA={CFG.n_calls_sa} blended "
+          f"forward(s), prefix_len={CFG.prefix_len}", flush=True)
 
 
 def main():
@@ -262,6 +380,17 @@ def main():
             f"ni{args.pladis_n_img_prefix},nl{args.pladis_n_lang},"
             f"msq{args.pladis_max_suffix_query}{backend_clause}"
         )
+    elif args.model == "smolvla":
+        # Geometry in the signature for the same reason as pi05: WHICH key sub-block
+        # gets sharpened is the experiment. No qgroup/cells — the suffix is action-only.
+        # Reshaping this clause is safe as of 2026-08-02: every existing smolvla eplog
+        # (anchors + gates) carries "pladis=off", no installed smolvla eplog exists.
+        pladis_clause = (
+            f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
+            f"b{args.pladis_beta:g},k{args.pladis_kind},"
+            f"ni{args.pladis_n_img},nlmax{args.pladis_n_lang_max},"
+            f"ns{args.pladis_n_state_tokens}"
+        )
     else:
         pladis_clause = (
             f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
@@ -289,6 +418,11 @@ def main():
             f"max_steps={args.max_steps}",
             f"exec_horizon={args.exec_horizon}",
             pladis_clause,
+            # emitted only when non-default, so every eplog written before the flag
+            # existed keeps its byte-identical signature and still resumes — the same
+            # append-only discipline as pi05's backend_clause above.
+            *([f"instr={args.instruction_source}"]
+              if args.instruction_source != "bddl" else []),
         ]
     )
     print(f"[arm] signature {arm_signature}", flush=True)
@@ -325,6 +459,20 @@ def main():
             n_lang=args.pladis_n_lang,
             max_suffix_query=args.pladis_max_suffix_query,
             sparse_backend=args.pladis_sparse_backend,
+        )
+    elif args.pladis_install and args.model == "smolvla":
+        # smolvla's kwarg surface: kind + CA key geometry, no qgroup/cells (the suffix
+        # is action-only). install_pladis prints its own status line, and delivery is
+        # proven by _assert_smolvla_delivery below — no block list to print here.
+        resolve_hooks(spec).install_pladis(
+            model,
+            pladis_scale=args.pladis_scale,
+            method=args.pladis_method,
+            beta=args.pladis_beta,
+            kind=args.pladis_kind,
+            n_img=args.pladis_n_img,
+            n_lang_max=args.pladis_n_lang_max,
+            n_state_tokens=args.pladis_n_state_tokens,
         )
     elif args.pladis_install:
         hooks = resolve_hooks(spec)
@@ -366,8 +514,9 @@ def main():
         arm_tag = "base0 (hook s=0)"
     elif args.pladis_cells:
         arm_tag = f"{args.pladis_cells} (s={args.pladis_scale:g})"
-    elif args.model == "pi05":
-        # no query-group axis on pi0.5 — the locus IS the key sub-block
+    elif args.model in ("pi05", "smolvla"):
+        # no query-group axis on either — the locus IS the key sub-block ("all x text"
+        # would misname a smolvla arm: there is no qgroup to cross with)
         arm_tag = f"{args.pladis_kind} keys (s={args.pladis_scale:g})"
     else:
         arm_tag = f"{args.pladis_qgroup} x {args.pladis_kind} (s={args.pladis_scale:g})"
@@ -379,7 +528,13 @@ def main():
                              per_episode_np_seed=axis in RUNTIME_RNG_AXES)
     if args.model == "pi05" and args.pladis_install:
         _assert_pi05_delivery(sess, ts, todo[0], model)
+    elif args.model == "smolvla" and args.pladis_install:
+        _assert_smolvla_delivery(sess, ts, todo[0], model)
 
+    instruction_map = (
+        (lambda spec: _task_meta_instruction(spec.base_task))
+        if args.instruction_source == "task-meta" else None
+    )
 
     t0, n_succ, n_run = time.time(), 0, 0
     for spec in todo:
@@ -399,6 +554,7 @@ def main():
                 "libero_object": "object",
                 "libero_goal": "goal",
             }.get(args.suite, args.suite),
+            instruction_map=instruction_map,
         )
         log.log(r)
         n_run += 1
