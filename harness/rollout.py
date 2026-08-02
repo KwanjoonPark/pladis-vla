@@ -45,6 +45,9 @@ def variant_marker_of(spec: EpisodeSpec) -> str:
         k = int(re.search(r"_initstate_(\d+)", tail.group(0)).group(1))
         if k:
             marker = f"{marker}_initstate_{k}".strip("_")
+        n = re.search(r"_noise_(\d+)", tail.group(0))
+        if n:  # noise axis: corruption id lives in the tail too
+            marker = f"{marker}_noise_{n.group(1)}".strip("_")
     return marker or "original"
 
 
