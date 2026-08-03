@@ -159,16 +159,27 @@ def noise_cat(task_name):
 AXES = {
     "layout": {"tag": "layout", "cat": layout_cat,
                "cats": ["add", "level_sample", "moved_level"],
-               # 07-28 text-locus dose row (entmax), mirroring language
+               # 07-28 text-locus dose row (entmax), mirroring language.
+               # 08-03 s-x-i / composite dose row: {stateximage}{15,20} +
+               #   axt-sxi{15,20} (composite's first appearance on this axis —
+               #   no lambda=1 counterpart, so its ladder anchors at 1.5).
                "extra_arms": {"n17": [
                               "actionxtext15", "actionxtext20",
-                              "allxtext", "allxtext15", "allxtext20"]},
+                              "allxtext", "allxtext15", "allxtext20",
+                              "stateximage15", "stateximage20",
+                              "axt-sxi15", "axt-sxi20"]},
                "extra_contrasts": {"n17": [
                    ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                    ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
                    ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
                    ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
                    ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
+                   ("stateximage15", "vanilla"), ("stateximage15", "stateximage"),
+                   ("stateximage20", "vanilla"), ("stateximage20", "stateximage15"),
+                   ("axt-sxi15", "vanilla"), ("axt-sxi15", "actionxtext15"),
+                   ("axt-sxi15", "stateximage15"),
+                   ("axt-sxi20", "vanilla"), ("axt-sxi20", "axt-sxi15"),
+                   ("axt-sxi20", "actionxtext20"),
                ]}},
     "language": {"tag": "lang", "cat": None, "cats": [],
                  # extra arms are skipped until all four suite eplogs exist.

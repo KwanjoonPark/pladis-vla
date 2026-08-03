@@ -56,4 +56,14 @@ run allxtext      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --p
 run allxtext15    --pladis-install --pladis-scale 1.5 --pladis-qgroup all    --pladis-kind text
 run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all    --pladis-kind text
 
+# 2026-08-03 s-x-i / composite dose row (operator request): stateximage lambda
+# {1.5, 2.0} (lambda=1 exists above) + axt-sxi (actionxtext+stateximage cells,
+# first appearance on this axis) lambda {1.5, 2.0} — layout was the NULL axis
+# at lambda=1; tests whether the state-x-image locus or its composite wakes up
+# under extrapolation.
+run stateximage15 --pladis-install --pladis-scale 1.5 --pladis-qgroup state --pladis-kind image
+run stateximage20 --pladis-install --pladis-scale 2.0 --pladis-qgroup state --pladis-kind image
+run axt-sxi15     --pladis-install --pladis-scale 1.5 --pladis-cells actionxtext,stateximage
+run axt-sxi20     --pladis-install --pladis-scale 2.0 --pladis-cells actionxtext,stateximage
+
 echo "[layout] ALL DONE $(date +%H:%M:%S)"
