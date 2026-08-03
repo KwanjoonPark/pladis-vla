@@ -89,4 +89,11 @@ run allxt-temp20    --pladis-install --pladis-scale 1.0 --pladis-method softmax 
 run allxt-temp20l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all    --pladis-kind text
 run allxt-temp20l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all    --pladis-kind text
 
+# 2026-08-03 lambda=2.0 composite-text completion (operator request): the two
+# composite text arms join the 2.0 rung so every text locus carries the full
+# 1.0 -> 1.5 -> 2.0 dose ladder (actionxtext20 already collected in the 07-26
+# block above; re-running it resumes to a no-op).
+run allxtext20 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text
+run axt-sxi20  --pladis-install --pladis-scale 2.0 --pladis-cells actionxtext,stateximage
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

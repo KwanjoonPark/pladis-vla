@@ -185,6 +185,8 @@ AXES = {
                  #   lambda ladder at both text loci — axt-temp20l{15,20} and
                  #   allxt-temp20{,l15,l20} — head-to-head vs the entmax
                  #   counterparts (zeros-vs-sharpening in the extrapolation regime).
+                 # 08-03 lambda=2.0 composite-text completion: {allxtext,axt-sxi}20
+                 #   — every text locus now carries the full 1.0/1.5/2.0 ladder.
                  "extra_arms": {"n17": [
                                 "allxtext", "axt-sxi",
                                 "actionxtext15", "allxtext15", "axt-sxi15",
@@ -192,6 +194,7 @@ AXES = {
                                 "axt-temp15", "axt-temp20", "axt-temp30",
                                 "actionxtext20", "actionximage20",
                                 "stateximage20", "statextext20",
+                                "allxtext20", "axt-sxi20",
                                 "axt-temp20l15", "axt-temp20l20",
                                 "allxt-temp20", "allxt-temp20l15", "allxt-temp20l20"]},
                  "extra_contrasts": {"n17": [
@@ -223,6 +226,12 @@ AXES = {
                      ("statextext20", "vanilla"), ("statextext20", "statextext"),
                      ("statextext20", "statextext15"),
                      ("actionxtext20", "actionximage20"),
+                     # 08-03 composite-text 2.0 rung: same ladder contrasts as
+                     # the base cells (vs vanilla, vs lambda=1, vs lambda=1.5)
+                     ("allxtext20", "vanilla"), ("allxtext20", "allxtext"),
+                     ("allxtext20", "allxtext15"),
+                     ("axt-sxi20", "vanilla"), ("axt-sxi20", "axt-sxi"),
+                     ("axt-sxi20", "axt-sxi15"),
                      # sharp-softmax dose row: each temp arm vs vanilla, vs its
                      # entmax counterpart (zeros head-to-head at matched dose),
                      # and the within-temp dose/locus neighbors
@@ -315,12 +324,17 @@ def main():
           ({c: sum(1 for v in cats.values() if v == c) for c in cfg["cats"]}
            if cats else ""))
 
-    print(f"\n== SR (success_once, %) — pooled + per suite ==")
-    print(f"  {'arm':13s}{'pooled':>8s}"
+    # `avg` is the unweighted suite mean (macro average): suites contribute
+    # unequal episode counts (e.g. robot 393/409/398/350), so `pooled`
+    # over-weights the larger suites; `avg` weights each suite equally.
+    print(f"\n== SR (success_once, %) — pooled + suite-avg + per suite ==")
+    print(f"  {'arm':13s}{'pooled':>8s}{'avg':>8s}"
           + "".join(f"{s.replace('libero_', ''):>9s}" for s in SUITES))
     for arm in arms:
-        row = "".join(f"{sr(arm, per_suite[s]):9.1f}" for s in SUITES)
-        print(f"  {arm:13s}{sr(arm, keys):8.2f}{row}")
+        suite_srs = [sr(arm, per_suite[s]) for s in SUITES]
+        row = "".join(f"{v:9.1f}" for v in suite_srs)
+        print(f"  {arm:13s}{sr(arm, keys):8.2f}"
+              f"{sum(suite_srs) / len(suite_srs):8.2f}{row}")
 
     if cats:
         print(f"\n== per-category SR ==")
