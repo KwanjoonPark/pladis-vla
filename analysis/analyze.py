@@ -198,7 +198,12 @@ AXES = {
                  #   counterparts (zeros-vs-sharpening in the extrapolation regime).
                  # 08-03 lambda=2.0 composite-text completion: {allxtext,axt-sxi}20
                  #   — every text locus now carries the full 1.0/1.5/2.0 ladder.
-                 "extra_arms": {"n17": [
+                 # 08-05 smolvla lambda=1.0 row ("10"-suffixed): the track's
+                 #   unsuffixed arms are lambda=1.5, so this rung restores the
+                 #   N1.7-matched dose point (ladder steps DOWN from 1.5).
+                 "extra_arms": {"smolvla": [
+                                "axt10", "axi10", "axcam10", "axti10"],
+                                "n17": [
                                 "allxtext", "axt-sxi",
                                 "actionxtext15", "allxtext15", "axt-sxi15",
                                 "actionximage15", "stateximage15", "statextext15",
@@ -255,6 +260,16 @@ AXES = {
                      ("allxt-temp20l15", "allxt-temp20"),
                      ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxt-temp20l15"),
                      ("allxt-temp20l15", "axt-temp20l15"),
+                 ],
+                 "smolvla": [
+                     ("axt10", "axi10"),               # locus contrast at 1.0
+                     ("axt10", "vanilla"), ("axi10", "vanilla"),
+                     ("axcam10", "vanilla"), ("axti10", "vanilla"),
+                     # dose step 1.0 -> 1.5 per arm (unsuffixed = 1.5)
+                     ("axt", "axt10"), ("axi", "axi10"),
+                     ("axcam", "axcam10"), ("axti", "axti10"),
+                     # composite-vs-image at 1.0 (the 1.5 rung's only Bonf*)
+                     ("axti10", "axi10"),
                  ]}},
     "noise": {"tag": "noise", "cat": noise_cat,
               "cats": ["motion", "gauss", "zoom", "fog", "glass"]},

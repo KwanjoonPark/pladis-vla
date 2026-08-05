@@ -76,4 +76,13 @@ run axi   --pladis-install --pladis-scale 1.5 --pladis-kind image
 run axcam --pladis-install --pladis-scale 1.5 --pladis-kind cams
 run axti  --pladis-install --pladis-scale 1.5 --pladis-kind text-image
 
+# 2026-08-05 lambda=1.0 row (dose-mismatch fix, flagged 08-03): the unsuffixed
+# arms above sit at lambda=1.5, unlike N1.7 whose primary row is 1.0 — append
+# the 1.0 rung under "10"-suffixed tags so the tracks compare at matched dose
+# and the 1.5 eplogs survive as the upper dose point.
+run axt10   --pladis-install --pladis-scale 1.0 --pladis-kind text
+run axi10   --pladis-install --pladis-scale 1.0 --pladis-kind image
+run axcam10 --pladis-install --pladis-scale 1.0 --pladis-kind cams
+run axti10  --pladis-install --pladis-scale 1.0 --pladis-kind text-image
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"
