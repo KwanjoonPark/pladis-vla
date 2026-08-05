@@ -54,6 +54,15 @@ run allxtext      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --p
 run allxtext15    --pladis-install --pladis-scale 1.5 --pladis-qgroup all    --pladis-kind text
 run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all    --pladis-kind text
 
+# 2026-08-05 far-extrapolation rungs: the 07-28 row was NULL through lambda=2.0
+# on this axis with a pooled-n.s. upward drift at L5, and language's all-x-t
+# kept rising to its lambda=2.0 peak — extend both text loci to {2.5, 3.0} to
+# test whether the robot null holds where the blend pushes weights negative.
+run actionxtext25 --pladis-install --pladis-scale 2.5 --pladis-qgroup action --pladis-kind text
+run actionxtext30 --pladis-install --pladis-scale 3.0 --pladis-qgroup action --pladis-kind text
+run allxtext25    --pladis-install --pladis-scale 2.5 --pladis-qgroup all    --pladis-kind text
+run allxtext30    --pladis-install --pladis-scale 3.0 --pladis-qgroup all    --pladis-kind text
+
 # ---- OLD-BASIS base0 (eager-dense) arm, gated ----
 REF=results/sweep/n17_lang_base0_libero_10_eplog.tsv
 if [ ! -f "$REF" ]; then

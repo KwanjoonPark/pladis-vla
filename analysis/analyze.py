@@ -260,16 +260,25 @@ AXES = {
               "cats": ["motion", "gauss", "zoom", "fog", "glass"]},
     "robot": {"tag": "robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
-              # 07-28 text-locus dose row (entmax), mirroring language
+              # 07-28 text-locus dose row (entmax), mirroring language.
+              # 08-05 far-extrapolation rungs {2.5, 3.0} at both text loci —
+              #   the 07-28 row was NULL through lambda=2.0; ladder contrasts
+              #   step from the lambda=2.0 arms.
               "extra_arms": {"n17": [
                              "actionxtext15", "actionxtext20",
-                             "allxtext", "allxtext15", "allxtext20"]},
+                             "allxtext", "allxtext15", "allxtext20",
+                             "actionxtext25", "actionxtext30",
+                             "allxtext25", "allxtext30"]},
               "extra_contrasts": {"n17": [
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
                   ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
                   ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
                   ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
+                  ("actionxtext25", "vanilla"), ("actionxtext25", "actionxtext20"),
+                  ("actionxtext30", "vanilla"), ("actionxtext30", "actionxtext25"),
+                  ("allxtext25", "vanilla"), ("allxtext25", "allxtext20"),
+                  ("allxtext30", "vanilla"), ("allxtext30", "allxtext25"),
               ]}},
 }
 
