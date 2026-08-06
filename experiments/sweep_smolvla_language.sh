@@ -85,4 +85,10 @@ run axi10   --pladis-install --pladis-scale 1.0 --pladis-kind image
 run axcam10 --pladis-install --pladis-scale 1.0 --pladis-kind cams
 run axti10  --pladis-install --pladis-scale 1.0 --pladis-kind text-image
 
+# 2026-08-06 image-locus low-dose rung (operator request): axi's dose points
+# are 1.5 and 1.0 only — probe BELOW the matched dose before opening the
+# temperature row, testing whether the image-locus response is monotone in
+# lambda or already saturated by 1.0.
+run axi05 --pladis-install --pladis-scale 0.5 --pladis-kind image
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

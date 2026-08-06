@@ -63,6 +63,18 @@ run actionxtext30 --pladis-install --pladis-scale 3.0 --pladis-qgroup action --p
 run allxtext25    --pladis-install --pladis-scale 2.5 --pladis-qgroup all    --pladis-kind text
 run allxtext30    --pladis-install --pladis-scale 3.0 --pladis-qgroup all    --pladis-kind text
 
+# 2026-08-06 temperature-softmax row (supp G.1; beta=2 = ent15-matched strength,
+# same calibration as language's allxt-temp20* row), all-x-text locus only
+# (operator grid 2026-08-06): the entmax ladder above was NULL through
+# lambda=2.0 with far-extrapolation rungs at {2.5, 3.0} — swap the sparse
+# branch for softmax(2*l) at lambda {1, 1.5, 2, 2.5} to test whether the
+# robot-axis response is entmax-specific (exact zeros) or generic sharpening.
+# lambda=2.5 pairs the far-extrapolation rung at matched blend weight.
+run allxt-temp20    --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
+run allxt-temp20l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
+run allxt-temp20l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
+run allxt-temp20l25 --pladis-install --pladis-scale 2.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
+
 # ---- OLD-BASIS base0 (eager-dense) arm, gated ----
 REF=results/sweep/n17_lang_base0_libero_10_eplog.tsv
 if [ ! -f "$REF" ]; then

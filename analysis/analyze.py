@@ -201,8 +201,10 @@ AXES = {
                  # 08-05 smolvla lambda=1.0 row ("10"-suffixed): the track's
                  #   unsuffixed arms are lambda=1.5, so this rung restores the
                  #   N1.7-matched dose point (ladder steps DOWN from 1.5).
+                 # 08-06 smolvla image-locus low-dose rung: axi05 (lambda=0.5),
+                 #   probing below the matched dose on the image locus.
                  "extra_arms": {"smolvla": [
-                                "axt10", "axi10", "axcam10", "axti10"],
+                                "axt10", "axi10", "axcam10", "axti10", "axi05"],
                                 "n17": [
                                 "allxtext", "axt-sxi",
                                 "actionxtext15", "allxtext15", "axt-sxi15",
@@ -270,6 +272,9 @@ AXES = {
                      ("axcam", "axcam10"), ("axti", "axti10"),
                      # composite-vs-image at 1.0 (the 1.5 rung's only Bonf*)
                      ("axti10", "axi10"),
+                     # 08-06 low-dose rung: vs vanilla, plus the 0.5 -> 1.0
+                     # dose step (higher dose listed first, as in axt/axt10)
+                     ("axi05", "vanilla"), ("axi10", "axi05"),
                  ]}},
     "noise": {"tag": "noise", "cat": noise_cat,
               "cats": ["motion", "gauss", "zoom", "fog", "glass"]},
@@ -279,11 +284,17 @@ AXES = {
               # 08-05 far-extrapolation rungs {2.5, 3.0} at both text loci —
               #   the 07-28 row was NULL through lambda=2.0; ladder contrasts
               #   step from the lambda=2.0 arms.
+              # 08-06 temperature-softmax row (beta=2, ent15-matched), all-x-t
+              #   locus only at lambda {1, 1.5, 2, 2.5}: each temp arm vs
+              #   vanilla, vs its entmax counterpart at matched dose (zeros
+              #   head-to-head), and the within-temp dose neighbor.
               "extra_arms": {"n17": [
                              "actionxtext15", "actionxtext20",
                              "allxtext", "allxtext15", "allxtext20",
                              "actionxtext25", "actionxtext30",
-                             "allxtext25", "allxtext30"]},
+                             "allxtext25", "allxtext30",
+                             "allxt-temp20", "allxt-temp20l15",
+                             "allxt-temp20l20", "allxt-temp20l25"]},
               "extra_contrasts": {"n17": [
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
@@ -294,6 +305,13 @@ AXES = {
                   ("actionxtext30", "vanilla"), ("actionxtext30", "actionxtext25"),
                   ("allxtext25", "vanilla"), ("allxtext25", "allxtext20"),
                   ("allxtext30", "vanilla"), ("allxtext30", "allxtext25"),
+                  ("allxt-temp20", "vanilla"), ("allxt-temp20", "allxtext"),
+                  ("allxt-temp20l15", "vanilla"), ("allxt-temp20l15", "allxtext15"),
+                  ("allxt-temp20l15", "allxt-temp20"),
+                  ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxtext20"),
+                  ("allxt-temp20l20", "allxt-temp20l15"),
+                  ("allxt-temp20l25", "vanilla"), ("allxt-temp20l25", "allxtext25"),
+                  ("allxt-temp20l25", "allxt-temp20l20"),
               ]}},
 }
 
