@@ -324,9 +324,16 @@ AXES = {
                                      ("allxtext20", "vanilla"),
                                      ("allxtext", "actionxtext")],
                }},
+               # 08-08 temperature-softmax row (beta=2, ent15-matched), all-x-t
+               # only, lambda {1, 1.5, 2}: the matched-dose counterparts of the
+               # entmax allxtext ladder. Delivered by the CONCURRENT driver
+               # sweep_n17_camera_temp.sh, so these can complete before or
+               # after their entmax pairs — extra_arms handles either order.
                "extra_arms": {"n17": [
                               "actionxtext15", "actionxtext20",
-                              "allxtext", "allxtext15", "allxtext20"]},
+                              "allxtext", "allxtext15", "allxtext20",
+                              "allxt-temp20", "allxt-temp20l15",
+                              "allxt-temp20l20"]},
                "extra_contrasts": {"n17": [
                    # dose ladder at each locus: vs vanilla and vs the rung below
                    ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
@@ -337,6 +344,14 @@ AXES = {
                    # query-group locus at matched dose (the lambda=1 pair is
                    # ("allxtext", "actionxtext") above)
                    ("allxtext15", "actionxtext15"), ("allxtext20", "actionxtext20"),
+                   # temperature row: each temp arm vs vanilla, vs its entmax
+                   # counterpart at matched dose (zeros head-to-head), and the
+                   # within-temp dose neighbor — same shape as robot/language
+                   ("allxt-temp20", "vanilla"), ("allxt-temp20", "allxtext"),
+                   ("allxt-temp20l15", "vanilla"), ("allxt-temp20l15", "allxtext15"),
+                   ("allxt-temp20l15", "allxt-temp20"),
+                   ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxtext20"),
+                   ("allxt-temp20l20", "allxt-temp20l15"),
                ]}},
     "robot": {"tag": "robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
