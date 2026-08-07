@@ -11,11 +11,18 @@
 # sim.get_state(), so set_init_state cannot revert it. Wrist camera, sim
 # state, fixture body_pos and the instruction are all bit-identical to the
 # paired base episode (verify_camera_axis.py, ALL GATES PASSED 2026-08-07).
-# Arms: the standard lambda=1 locus grid, same as the noise axis (base0
-# omitted — bit-identical to vanilla since the 07-20 lambda=0 SDPA
-# delegation, verify_base0_parity.py).
+# Arms (operator grid 2026-08-07): vanilla + the TEXT-LOCUS DOSE LADDER at
+# both query groups — a-x-t and all-x-t at lambda {1, 1.5, 2.0}. This axis
+# skips the standard lambda=1 modality grid on purpose: on language and robot
+# the lambda=1 cells were flat and every signal that appeared came from the
+# text-locus dose row, so the seven episodes-budget goes into dose depth at
+# the two text loci rather than breadth across cells that already read null.
+# base0 is omitted (bit-identical to vanilla since the 07-20 lambda=0 SDPA
+# delegation, verify_base0_parity.py); with no image arm, the surviving locus
+# contrast is the QUERY-GROUP one (all-x-t vs a-x-t at matched dose), which is
+# what analysis/analyze.py uses as this axis's locus pair.
 # Cost: ~15-20 s/ep projected from the robot axis's success/failure wall-time
-# split, i.e. ~7-9 h per arm and ~40-53 h for the six arms on one A5000.
+# split, i.e. ~7-9 h per arm and ~46-62 h for the seven arms on one A5000.
 # Resume-safe at episode granularity.
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -40,10 +47,16 @@ run() { # $1=tag, rest = pladis args
 }
 
 run vanilla
-run actionximage --pladis-install --pladis-scale 1.0 --pladis-qgroup action --pladis-kind image
-run actionxtext  --pladis-install --pladis-scale 1.0 --pladis-qgroup action --pladis-kind text
-run statextext   --pladis-install --pladis-scale 1.0 --pladis-qgroup state  --pladis-kind text
-run stateximage  --pladis-install --pladis-scale 1.0 --pladis-qgroup state  --pladis-kind image
-run allxall      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pladis-kind all
+
+# action-row text locus, lambda 1.0 -> 1.5 -> 2.0
+run actionxtext   --pladis-install --pladis-scale 1.0 --pladis-qgroup action --pladis-kind text
+run actionxtext15 --pladis-install --pladis-scale 1.5 --pladis-qgroup action --pladis-kind text
+run actionxtext20 --pladis-install --pladis-scale 2.0 --pladis-qgroup action --pladis-kind text
+
+# all-row (state+action) text locus, same ladder — pairs with the row above at
+# matched dose, so the difference isolates the query group
+run allxtext      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pladis-kind text
+run allxtext15    --pladis-install --pladis-scale 1.5 --pladis-qgroup all    --pladis-kind text
+run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all    --pladis-kind text
 
 echo "[camera] ALL DONE $(date +%H:%M:%S)"

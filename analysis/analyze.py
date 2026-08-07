@@ -293,12 +293,51 @@ AXES = {
                  ]}},
     "noise": {"tag": "noise", "cat": noise_cat,
               "cats": ["motion", "gauss", "zoom", "fog", "glass"]},
-    # camera: agentview re-posing (runtime `_view_` tail). Same lambda=1 locus
-    # grid as noise; the per-family breakdown is the point of the axis, since
-    # orbit/orbit_up move the viewpoint, zoom changes scale only and reaim
-    # changes bearing only.
+    # camera: agentview re-posing (runtime `_view_` tail). The per-family
+    # breakdown is the point of the axis — orbit/orbit_up move the viewpoint,
+    # zoom changes scale only, reaim changes bearing only, so a locus can help
+    # one and not another.
+    #
+    # This axis does NOT run the track's default lambda=1 modality grid
+    # (operator grid 2026-08-07, sweep_n17_camera.sh): it runs vanilla plus the
+    # text-locus dose ladder at both query groups. `model_overrides` therefore
+    # replaces the model-level arms/contrasts — without it analyze.py would
+    # demand base0/actionximage/statextext/stateximage/allxall eplogs that this
+    # campaign never produces. Only vanilla + a-x-t are mandatory so the axis is
+    # analyzable while the driver is still running; the five ladder rungs join
+    # as `extra_arms` the moment all four of their suite eplogs exist.
+    # With no image arm the modality locus pair does not exist here, so the
+    # locus pair is the QUERY-GROUP one: all-x-t vs a-x-t.
     "camera": {"tag": "camera", "cat": camera_cat,
-               "cats": ["orbit", "orbit_up", "zoom", "reaim"]},
+               "cats": ["orbit", "orbit_up", "zoom", "reaim"],
+               "model_overrides": {"n17": {
+                   "arms": ["vanilla", "actionxtext"],
+                   "key_contrasts": [("actionxtext", "vanilla")],
+                   "locus_pair": ("allxtext", "actionxtext"),
+                   "suite_contrasts": [("actionxtext", "vanilla"),
+                                       ("allxtext", "vanilla"),
+                                       ("allxtext20", "vanilla"),
+                                       ("allxtext", "actionxtext")],
+                   "cat_contrasts": [("actionxtext", "vanilla"),
+                                     ("actionxtext20", "vanilla"),
+                                     ("allxtext", "vanilla"),
+                                     ("allxtext20", "vanilla"),
+                                     ("allxtext", "actionxtext")],
+               }},
+               "extra_arms": {"n17": [
+                              "actionxtext15", "actionxtext20",
+                              "allxtext", "allxtext15", "allxtext20"]},
+               "extra_contrasts": {"n17": [
+                   # dose ladder at each locus: vs vanilla and vs the rung below
+                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
+                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
+                   ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
+                   ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
+                   ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
+                   # query-group locus at matched dose (the lambda=1 pair is
+                   # ("allxtext", "actionxtext") above)
+                   ("allxtext15", "actionxtext15"), ("allxtext20", "actionxtext20"),
+               ]}},
     "robot": {"tag": "robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
               # 07-28 text-locus dose row (entmax), mirroring language.
@@ -365,7 +404,11 @@ def main():
     args = ap.parse_args()
     axis = next(a for a in AXES if getattr(args, a))
     cfg = AXES[axis]
-    mcfg = MODELS[args.model]
+    # An axis whose driver carries a different arm list than the track default
+    # overrides the model-level keys (arms / contrasts / locus_pair) here, so
+    # the arm vocabulary stays defined in ONE place per (model, axis) instead
+    # of being split between MODELS and a special case downstream.
+    mcfg = {**MODELS[args.model], **cfg.get("model_overrides", {}).get(args.model, {})}
     prefix = f"{mcfg['tag']}_{cfg['tag']}"
 
     arms = list(mcfg["arms"])
@@ -480,6 +523,13 @@ def main():
                   f"  drop {sr('vanilla', ks) - o:+6.1f}pp")
 
     lo_a, lo_b = mcfg["locus_pair"]
+    # Guarded like the severity baseline above: on an axis whose locus arms are
+    # extra_arms (camera), one of them can still be mid-campaign, and that must
+    # not invalidate everything already printed.
+    if lo_a not in arms or lo_b not in arms:
+        print(f"\n[note] per-task locus deltas skipped: {lo_a}/{lo_b} "
+              f"not both present in {arms}")
+        return
     print(f"\n== biggest per-task {lo_a} vs {lo_b} deltas "
           f"(n>=8 variants, |delta|>=20pp) ==")
     bt_keys = defaultdict(list)
