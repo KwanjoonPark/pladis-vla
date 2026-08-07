@@ -36,9 +36,18 @@
      (libero_floor_manipulation.py:412), so "it works on libero_10" does not
      generalize by inspection.
 
-Run: bash experiments/run.sh experiments/verify_camera_axis.py
+`--mode video` renders the same evidence for a human reviewer: one mp4 with
+the unperturbed episode and all four families side by side, driven through an
+IDENTICAL scripted action sequence, so every difference between panels is the
+camera and nothing else. It re-asserts the gate-C invariants per FRAME (not
+just after settle) and burns the running max|d| into each panel, so the video
+is a gated artifact rather than an illustration.
+
+Run: bash experiments/run.sh experiments/verify_camera_axis.py [--mode gates|video]
 """
 
+import argparse
+import os
 import re
 
 import numpy as np
@@ -288,7 +297,150 @@ def gate_E():
     print("PASS gate E: all four suites construct and deliver the predicted pose")
 
 
+# ---------------------------------------------------------------- video mode
+
+# Scripted OSC_POSE deltas, identical for every panel. A noop sequence would
+# render five near-static images and prove nothing about whether the scene
+# tracks together, so the arm is driven through a circle in the xy-plane with a
+# slow descent and a gripper toggle. Deterministic and model-free on purpose:
+# a policy in the loop would make the panels diverge for a reason that has
+# nothing to do with the camera.
+def scripted_action(t: int, period: int = 40) -> np.ndarray:
+    phase = 2 * np.pi * t / period
+    return np.array([0.35 * np.sin(phase), 0.35 * np.cos(phase), -0.12,
+                     0.0, 0.0, 0.0,
+                     1.0 if (t // (period // 2)) % 2 else -1.0], dtype=np.float32)
+
+
+def _panel(av, wrist, caption, sub, d_av, d_wr, font, size=256):
+    """One column: agentview over wrist, both rotated 180 deg exactly as
+    OfficialGr00tPolicy.wrap_obs (and harness/video.py) does, so the panel
+    shows what the model would receive rather than the raw render.
+
+    The two cameras carry DIFFERENT statistics on purpose. Agentview reports
+    mean|d|, because max|d| saturates at 255 the moment any pixel differs and
+    would read identically for a 2 deg re-aim and a 75 deg orbit. Wrist reports
+    max|d|, because the claim there is bit-identity and only the max can
+    witness it."""
+    import cv2
+
+    def _cell(img, tag, stat, val, colour):
+        cell = np.ascontiguousarray(img[::-1, ::-1])
+        if cell.shape[0] != size:
+            cell = cv2.resize(cell, (size, size), interpolation=cv2.INTER_AREA)
+        bar = np.full((20, size, 3), 18, np.uint8)
+        cv2.putText(bar, f"{tag} {stat}|d| vs base {val:6.1f}", (5, 14),
+                    font, 0.40, colour, 1, cv2.LINE_AA)
+        return np.vstack([cell, bar])
+
+    head = np.full((36, size, 3), 30, np.uint8)
+    cv2.putText(head, caption, (5, 15), font, 0.46, (245, 245, 245), 1, cv2.LINE_AA)
+    cv2.putText(head, sub, (5, 30), font, 0.38, (150, 200, 255), 1, cv2.LINE_AA)
+    return np.vstack([
+        head,
+        _cell(av, "AGENTVIEW", "mean", d_av,
+              (120, 200, 255) if d_av > 1 else (110, 110, 110)),
+        _cell(wrist, "WRIST", " max", d_wr,
+              (120, 255, 140) if d_wr == 0 else (255, 110, 110)),
+    ])
+
+
+def render_video(out_path: str, steps: int, suite: str):
+    """One mp4: unperturbed + the four families, lockstep on identical actions.
+
+    Every panel is an independent run of the SAME base task and init state, so
+    the sim must evolve identically in all five; the per-frame asserts below
+    are gate C re-applied at every step instead of once after settle."""
+    import cv2
+    import imageio.v2 as imageio
+
+    ts = LiberoPlusTaskSet(suite, "camera")
+    ts0 = LiberoPlusTaskSet(suite, None)
+    picks = _picks(ts, ts.schedule(len(ts.task_names), seed=0))
+    base_task = next(iter(picks.values())).base_task
+    columns = [("base", _spec(ts0, base_task), ts0.init_states_of(base_task))] + [
+        (fam, picks[fam], ts.init_states_of(picks[fam].task_name)) for fam in FAMILIES
+    ]
+
+    sess = LiberoPlusSession(seed=0)
+    streams, states, poses = {}, {}, {}
+    for name, spec, init_states in columns:
+        obs, instruction = sess.reset(spec, init_states)
+        frames = [(obs["agentview_image"].copy(), obs["robot0_eye_in_hand_image"].copy())]
+        for t in range(steps):
+            obs, _, _, _ = sess.step(scripted_action(t))
+            frames.append((obs["agentview_image"].copy(),
+                           obs["robot0_eye_in_hand_image"].copy()))
+        env = sess._env.env
+        cid = env.sim.model.camera_name2id("agentview")
+        streams[name] = frames
+        states[name] = env.sim.get_state().flatten().copy()
+        poses[name] = (env.sim.model.cam_pos[cid].copy(),
+                       env.sim.model.cam_quat[cid].copy())
+        print(f"  [{name:8s}] {steps + 1} frames  "
+              f"cam_pos={np.round(poses[name][0], 4)}", flush=True)
+    sess.close()
+
+    # The video claims "same scene, different camera" — assert it before writing
+    # one, on the FULL trajectory rather than the post-settle frame alone.
+    for name, _, _ in columns[1:]:
+        assert np.array_equal(states[name], states["base"]), \
+            f"video: {name} sim state diverged from base under identical actions"
+        assert all(np.array_equal(w, wb) for (_, w), (_, wb)
+                   in zip(streams[name], streams["base"])), \
+            f"video: {name} wrist stream differs from base — not agentview-only"
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    caps = {"base": ("base (unperturbed)", "view 0_0_100_0_0")}
+    for fam, spec, _ in columns[1:]:
+        h, v, s, r, e = view_params(spec.task_name)
+        caps[fam] = (fam, f"h={h} v={v} scale={s}% rot={r} vert={e}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
+    writer = imageio.get_writer(out_path, fps=20, codec="libx264", quality=7,
+                                pixelformat="yuv420p")
+    peak = {}
+    for i in range(steps + 1):
+        cols = []
+        for name, _, _ in columns:
+            av, wr = streams[name][i]
+            avb, wrb = streams["base"][i]
+            d_av = float(np.abs(av.astype(np.int16) - avb.astype(np.int16)).mean())
+            d_wr = float(np.abs(wr.astype(np.int16) - wrb.astype(np.int16)).max())
+            peak[name] = max(peak.get(name, 0.0), d_av)
+            cols.append(_panel(av, wr, caps[name][0], caps[name][1], d_av, d_wr, font))
+        grid = np.hstack(cols)
+        banner = np.full((26, grid.shape[1], 3), 20, np.uint8)
+        cv2.putText(banner, f"LIBERO-plus camera axis | {suite} | {base_task[:70]} "
+                            f"| identical scripted actions | step {i}",
+                    (6, 18), font, 0.44, (235, 235, 235), 1, cv2.LINE_AA)
+        frame = np.vstack([banner, grid])
+        # Pad to a multiple of the ffmpeg macro block instead of letting the
+        # writer resize: a resize resamples every panel and would blur the very
+        # detail the video exists to show (harness/video.py does the same, via
+        # its header height).
+        pad = -frame.shape[0] % 16
+        if pad:
+            frame = np.vstack([frame, np.full((pad, frame.shape[1], 3), 20, np.uint8)])
+        writer.append_data(frame)
+    writer.close()
+    print(f"\n  per-family peak agentview mean|d| vs base: "
+          + ", ".join(f"{k}={v:.1f}" for k, v in peak.items() if k != "base"))
+    print(f"  wrist max|d| vs base: 0 on every frame of every family (asserted)")
+    print(f"PASS video: {out_path} ({steps + 1} frames, {len(columns)} panels)")
+
+
 def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--mode", choices=["gates", "video"], default="gates")
+    p.add_argument("--out", default="results/camera_axis_check.mp4",
+                   help="mp4 path for --mode video")
+    p.add_argument("--steps", type=int, default=120, help="control steps per panel")
+    p.add_argument("--suite", default="libero_10")
+    args = p.parse_args()
+    if args.mode == "video":
+        render_video(args.out, args.steps, args.suite)
+        return
     gate_A(); gates_BC(); gate_D(); gate_E()
     # smoke_model.py is language-specific by construction (its pass condition
     # is "the variant instruction differs from the anchor's"), so the model

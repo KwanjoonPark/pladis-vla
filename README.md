@@ -316,7 +316,10 @@ machine or after dependency changes, run in order:
    scaling), `verify_noise_axis.py` (wiring, agentview-only corruption,
    per-episode reseed determinism), `verify_camera_axis.py` (wiring +
    non-neutral/unconfounded tails, delivered pose ≡ closed-form prediction
-   from the tail, agentview-only isolation, determinism, all four suites).
+   from the tail, agentview-only isolation, determinism, all four suites;
+   `--mode video` renders the unperturbed episode and all four viewpoint
+   families side by side under identical scripted actions, re-asserting the
+   isolation invariants per frame before it writes).
 5. **π0.5 hook smoke (CPU)** — `verify_pi05_hook.py`: λ=0 and prefix passes
    bit-identical to stock gemma eager attention; kind blend ≡ the official
    FLUX mass-preserving formulation; row/block-mass preservation; β=1

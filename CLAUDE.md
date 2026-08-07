@@ -55,7 +55,15 @@ bash experiments/run.sh experiments/verify_base0_parity.py    # λ=0 bit-parity 
 bash experiments/run.sh experiments/verify_language_axis.py
 bash experiments/run.sh experiments/verify_layout_axis.py --mode gates
 bash experiments/run.sh experiments/verify_robot_axis.py
+bash experiments/run.sh experiments/verify_noise_axis.py
+bash experiments/run.sh experiments/verify_camera_axis.py            # --mode video
 ```
+
+`verify_camera_axis.py --mode video` writes one mp4 with the unperturbed
+episode and all four viewpoint families side by side under identical scripted
+actions — the same invariants as the gates, in a form a reviewer can check by
+eye. It asserts them per frame before writing, so a passing video is evidence,
+not illustration.
 
 Run one arm (see README §6.1 for the full flag table):
 
