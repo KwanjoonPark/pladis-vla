@@ -189,6 +189,8 @@ goes back in` clause is why check (c) measures rather than assumes.
 | `language` | 1,537 | instruction rephrasing only (gate-verified: bddl differs in the `(:language)` line alone) |
 | `layout` | 1,525 | scene changes — added distractors, moved objects/fixtures (BDDL placement resampling) |
 | `robot` | 1,550 | robot init-state offsets, 5 strength levels 0.1–0.5 rad (runtime `Panda{k}` swap) |
+| `noise` | 1,601 | obs-side corruption of the agentview stream: motion / gaussian / zoom blur, fog, glass (5 families × 10 severities) |
+| `camera` | 1,599 | agentview re-posing from the runtime `_view_` tail: orbit (yaw ±75°) 443, orbit_up (yaw + 15° elevation) 549, zoom (pivot-ray push-out 115–200 %) 313, reaim (bearing-only ±10°) 294 |
 | `none` (original) | 400 | unperturbed per-task baselines, init states 0–9 |
 
 - **π0.5 model**: the official `pi05_libero` checkpoint
@@ -248,8 +250,8 @@ experiments/   entry points
   machine.env.example  per-machine config template (copy to machine.env)
   eval_arm.py          single-arm evaluator, ALL tracks (--model) — anchors,
                        parity checks, and sweeps share this one code path
-  sweep_n17_*.sh       n17 sweep drivers (language / original / layout / robot);
-                       arm-outer, suite-inner
+  sweep_n17_*.sh       n17 sweep drivers (language / original / layout / robot /
+                       noise / camera); arm-outer, suite-inner
   sweep_pi05_*.sh      π0.5 sweep drivers (+ sweep_pi05_common.sh); SUITE-outer,
                        one suite per GPU (§6.2)
   verify_*.py          verification gates (§5)
@@ -257,8 +259,8 @@ experiments/   entry points
   smoke_model.py       GPU smoke test (registry-driven, --model)
   smoke_pi05.py        GPU smoke + instruction delivery asserted at the tokenizer
 scripts/       externals.lock (pinned sibling-checkout SHAs) + clone_externals.sh
-analysis/      analyze.py [--model n17|pi05] --language|--layout|--robot
-               (paired McNemar)
+analysis/      analyze.py [--model n17|pi05] --language|--layout|--robot|
+               --noise|--camera (paired McNemar)
 docs/          benchmark.md — cross-checked benchmark facts
 results/       (gitignored) eplogs, videos, driver logs
 ```
@@ -311,7 +313,10 @@ machine or after dependency changes, run in order:
    scenes), `verify_layout_axis.py` (determinism, perturbation delivery,
    silent-nullification regression, cross-process pairing),
    `verify_robot_axis.py` (wiring, delivery mechanism, determinism, level
-   scaling).
+   scaling), `verify_noise_axis.py` (wiring, agentview-only corruption,
+   per-episode reseed determinism), `verify_camera_axis.py` (wiring +
+   non-neutral/unconfounded tails, delivered pose ≡ closed-form prediction
+   from the tail, agentview-only isolation, determinism, all four suites).
 5. **π0.5 hook smoke (CPU)** — `verify_pi05_hook.py`: λ=0 and prefix passes
    bit-identical to stock gemma eager attention; kind blend ≡ the official
    FLUX mass-preserving formulation; row/block-mass preservation; β=1
@@ -466,7 +471,8 @@ with a warning.
 nohup bash experiments/sweep_n17_<axis>.sh > results/sweep/driver_<axis>.out 2>&1 &
 ```
 
-One driver per axis (`language` / `original` / `layout` / `robot`). Each
+One driver per axis (`language` / `original` / `layout` / `robot` / `noise` /
+`camera`). Each
 driver enumerates its arm list explicitly — the script is the source of truth
 for which arms an axis carries. Drivers refuse to start from a dirty working
 tree (results must be attributable to a commit; each run appends
@@ -500,6 +506,8 @@ therefore stay fixed across every arm of a campaign; each run appends
 python3 analysis/analyze.py --language
 python3 analysis/analyze.py --layout    # + perturbation-category breakdown
 python3 analysis/analyze.py --robot     # + strength-level (L1–L5) breakdown
+python3 analysis/analyze.py --noise     # + corruption-family breakdown
+python3 analysis/analyze.py --camera    # + viewpoint-family breakdown
 python3 analysis/analyze.py --model pi05 --language
 ```
 

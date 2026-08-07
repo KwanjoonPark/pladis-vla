@@ -63,7 +63,39 @@ AXIS_TO_CATEGORY = {
     # per frame -> determinism and arm pairing come from the per-episode
     # np reseed in LiberoPlusSession.reset. Gates: verify_noise_axis.py.
     "noise": "Sensor Noise",
-    # camera runtime axis: supported by env_wrapper, not wired yet.
+    # camera is a runtime SCENE-side axis: the curated name's
+    # `_view_<h>_<v>_<scale>_<rot>_<vert>` tail is parsed by env_wrapper
+    # (env_wrapper.py:204-218) and forwarded to the problem class, which
+    # re-poses the AGENTVIEW camera at model-build time
+    # (libero_*_manipulation.py `_setup_camera`, e.g.
+    # libero_tabletop_manipulation.py:305-351) before handing the arena to
+    # robosuite. Four disjoint families in the curated set (verified
+    # 2026-08-07 over all 1,599 variants, verify_camera_axis.py gate A):
+    #   orbit     443  h!=0, v=0    yaw about the world z-axis through the
+    #                               pivot (0,0,0.8), h = +-75 deg (stored mod
+    #                               360, so 285..359 are the negative half)
+    #   orbit_up  549  h!=0, v=15   the same yaw after a 15 deg elevation
+    #                               (rotate_around_y about the same pivot;
+    #                               v is 15 or nothing across all 1,599)
+    #   zoom      313  scale 115..200 (percent) — the camera is pushed out
+    #                               along its pivot ray, orientation UNCHANGED
+    #   reaim     294  rot,vert!=0  pure optical-axis re-aim (quat only,
+    #                               position unchanged), both +-10 deg
+    # The unperturbed pose the tail transforms is SCENE-dependent (Kitchen
+    # [0.6586,0,1.6104], Living-Room [0.6066,0,0.96], Study [0.4586,0,1.6104],
+    # libero_object's tabletop [0.8966,0,0.65]), so the perturbation is a
+    # relative transform, never an absolute pose.
+    # Delivery is DIRECT and cannot be reverted: the pose lands in
+    # `sim.model.cam_pos/cam_quat`, which `sim.get_state()` (qpos/qvel) does
+    # not carry, so set_init_state leaves it alone. The wrist camera and the
+    # scene are untouched -> episodes stay paired with the original arm
+    # (measured 2026-08-07: agentview mean|d| 29-53/255, wrist bit-identical,
+    # post-settle sim state bit-identical). The pose is a closed-form
+    # function of the tail, so nothing here draws RNG -> NOT in
+    # RUNTIME_RNG_AXES, and the base task's init states apply unchanged
+    # (same bddl, same state dim) -> NOT scene-altering.
+    # Gates: verify_camera_axis.py.
+    "camera": "Camera Viewpoints",
 }
 
 # Axes needing the per-episode np reseed at reset (corruption draws + fixture

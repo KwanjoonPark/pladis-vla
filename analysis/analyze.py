@@ -146,6 +146,21 @@ def robot_level(task_name):
     k = int(re.search(r"_initstate_(\d+)", task_name).group(1))
     return f"L{(k - 1) // 100 + 1}"
 
+def camera_cat(task_name):
+    """Viewpoint family from the `_view_<h>_<v>_<scale>_<rot>_<vert>` tail.
+    The four are disjoint and exhaust the curated set (asserted over all
+    1,599 variants by verify_camera_axis.py gate A), and they differ in KIND,
+    not just strength: zoom and reaim leave the camera's orientation resp.
+    position fixed, so an intervention that helps one need not help another."""
+    h, v, s, r, e = (int(x) for x in
+                     re.search(r"_view_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_initstate_",
+                               task_name).groups())
+    if s != 100:
+        return "zoom"
+    if r or e:
+        return "reaim"
+    return "orbit_up" if v else "orbit"
+
 def noise_cat(task_name):
     """Corruption family from the `_noise_<N>` tail (N=1..50): decade ->
     family, severity = N within decade (env_wrapper.py:283-305)."""
@@ -278,6 +293,12 @@ AXES = {
                  ]}},
     "noise": {"tag": "noise", "cat": noise_cat,
               "cats": ["motion", "gauss", "zoom", "fog", "glass"]},
+    # camera: agentview re-posing (runtime `_view_` tail). Same lambda=1 locus
+    # grid as noise; the per-family breakdown is the point of the axis, since
+    # orbit/orbit_up move the viewpoint, zoom changes scale only and reaim
+    # changes bearing only.
+    "camera": {"tag": "camera", "cat": camera_cat,
+               "cats": ["orbit", "orbit_up", "zoom", "reaim"]},
     "robot": {"tag": "robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
               # 07-28 text-locus dose row (entmax), mirroring language.

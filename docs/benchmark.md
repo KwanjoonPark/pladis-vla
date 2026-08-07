@@ -22,7 +22,7 @@
 | Language | bddl `(:language)` 줄만 rewrite | 장면 동일 (diff로 확인: :language 외 0 diff) |
 | Light / Background | scene XML 수정, `_light`/`_table`/`_tb` bddl | 있음 |
 | Layout | `_add`(교란물체)/`_level`/`_sample` bddl | 있음 (⚠️ 상태벡터 차원 변동) |
-| Camera | **런타임**: 파일명 `_view_<h>_<v>_<scale>_<rot>_<vert>` 파싱 | 없음 |
+| Camera | **런타임**: 파일명 `_view_<h>_<v>_<scale>_<rot>_<vert>` 파싱 (아래 전용 절) | 없음 |
 | Robot Init | **런타임**: 파일명 `_initstate_<k>` → 로봇 클래스명 치환(초기 qpos 교란 0.1–0.5) | 없음 |
 | Sensor Noise | **런타임**: 파일명 `_noise_<n>` → 이미지 photometric 변형 (Table 5: motion/gaussian/zoom blur, fog, glass) | 없음 |
 
@@ -54,6 +54,42 @@
   layout 큐레이션 이름에는 런타임 tail(`_view_..._initstate_`)이 없음 (1,525개 전수 확인).
   fixture 위치는 `sim.get_state()` 밖 → 결정론 검증은 반드시 body_xpos도 비교할 것.
 - 논문의 "Robot Initial States" 축은 이 파일과 무관 (위 표의 런타임 qpos 교란).
+
+## Camera Viewpoints 축 (2026-08-07 검증, `verify_camera_axis.py` ALL PASSED)
+
+- **큐레이션 1,599개**: 10/goal/object/spatial = 419/408/396/376. 전량이
+  `_view_<h>_<v>_<scale>_<rot>_<vert>_initstate_0` 꼴이고 `_initstate_`는 항상 0,
+  `_noise_` tail 없음, 내용 마커(`_language_`/`_light_`/`_add_`) 없음 → **다른 축과의
+  교락 0** (gate A 전수 확인). 중립 튜플 `0_0_100_0_0`은 하나도 없음(= no-op arm 불가).
+- **4개 서로소 계열** (analysis/analyze.py `camera_cat` ≡ gate A):
+
+  | 계열 | 수 | 파라미터 | 기하 |
+  |---|---|---|---|
+  | orbit | 443 | h≠0, v=0 | 피벗 (0,0,0.8) 통과 z축 요(yaw) 회전, **±75°** (360 모듈로 저장 → 285–359가 음의 절반) |
+  | orbit_up | 549 | h≠0, v=15 | 같은 피벗 y축 **15° 올림 후** 요 회전 (v는 전량 15 또는 0) |
+  | zoom | 313 | scale 115–200(%) | 피벗-광선 방향 밀어내기, **자세(quat) 불변** |
+  | reaim | 294 | rot,vert≠0 | **위치 불변**, 시선만 ±10° (z 후 y) |
+
+- **전달 경로**: `env_wrapper.py:204-218`이 tail을 파싱 → 문제 클래스
+  `_setup_camera`(예: `libero_tabletop_manipulation.py:305-351`)가 arena 빌드 시점에
+  agentview를 재배치. 결과는 `sim.model.cam_pos/cam_quat`에 안착 —
+  **`sim.get_state()`(qpos/qvel) 밖이라 `set_init_state`가 되돌릴 수 없음**
+  (layout 축의 무효화 실패모드가 여기서는 구조적으로 발생 불가).
+- **기준 자세는 장면 의존**: Kitchen `[0.6586, 0, 1.6104]`, Living-Room
+  `[0.6066, 0, 0.96]`, Study `[0.4586, 0, 1.6104]`, object 계열 tabletop
+  `[0.8966, 0, 0.65]`. 교란은 **상대 변환**이지 절대 자세가 아님 → 게이트는 기준 자세를
+  하드코딩하지 않고 짝지어진 base 에피소드에서 읽어 예측한다.
+- **⚠️ 상류 부호 함정**: `rotate_around_y`는 `from_rotvec(radians(-degrees)·ŷ)`
+  (`libero_tabletop_manipulation.py:68`) — **음수**다. `+y` 오일러 회전으로 읽으면
+  orbit_up 예측이 전부 테이블 아래로 뒤집힌다. `rotate_around_z`는 위치를 **원점** 기준
+  회전(117행)하지만 피벗이 z축 위에 있어 피벗 기준 회전과 동일.
+- **격리·페어링 실측** (libero_10, 계열별 1개, reset+settle 후):
+  agentview mean|d| 34.6–65.0/255인 반면 **wrist 이미지·sim state·fixture `body_pos`·
+  instruction 전부 bit-identical** → 교란이 카메라 하나에만 도달하고 장면·팔·언어는
+  불변. 따라서 base(axis=None) arm과 그대로 짝지어진다.
+- **RNG 없음**: 자세가 파일명 tail의 닫힌 형태 함수 → `RUNTIME_RNG_AXES` 비대상,
+  fresh session 2회 재실행이 bit-identical(gate D). init 파일은 base의 pruned_init을
+  그대로 적용(장면 동일, dim 일치) → scene-altering 아님.
 
 ## 평가 프로토콜 참고 (paper)
 

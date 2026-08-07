@@ -33,15 +33,22 @@ from .video import EpisodeVideo
 
 def variant_marker_of(spec: EpisodeSpec) -> str:
     """Perturbation marker of this episode, e.g. "language_29",
-    "moved_level3_sample7", "initstate_316"; unperturbed base -> "original".
+    "moved_level3_sample7", "initstate_316", "view_31_15_100_0_0";
+    unperturbed base -> "original".
 
     Runtime-axis perturbations live in the pseudo-filename tail, not a
     content marker: a non-zero `_initstate_<k>` (robot axis) must surface
-    here or robot-axis videos would all be labeled "original"."""
+    here or robot-axis videos would all be labeled "original". Same for the
+    camera axis, whose ONLY marker is the view tuple — its variants carry
+    `_initstate_0` and no content marker, so without the branch below every
+    one of the 1,599 camera episodes would file itself as "original"."""
     stripped = _RUNTIME_TAIL.sub("", spec.task_name)
     marker = stripped[len(spec.base_task):].strip("_")
     tail = _RUNTIME_TAIL.search(spec.task_name)
     if tail:
+        view = re.search(r"_view_(\d+_\d+_\d+_\d+_\d+)_initstate_", tail.group(0)).group(1)
+        if view != "0_0_100_0_0":  # camera axis: neutral tuple = no perturbation
+            marker = f"{marker}_view_{view}".strip("_")
         k = int(re.search(r"_initstate_(\d+)", tail.group(0)).group(1))
         if k:
             marker = f"{marker}_initstate_{k}".strip("_")
