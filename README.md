@@ -488,9 +488,10 @@ and, when enabled, `videos/n17_{axis}_{arm}_{suite}/ep#####_{S|F}_{task}.mp4`).
 The `noise` driver additionally accepts **arm names as arguments**, which filter
 its arm list (an unknown name aborts; no argument runs all seven). That axis is
 CPU-bound rather than GPU-bound — its per-frame corruption costs 448 ms in the
-motion family against a 45.8 ms/step base, so 21 % of the episodes carry 77 % of
-the wall time and one arm projects to ~26–30 h — and two drivers over disjoint
-arms nearly halve the wall clock:
+motion family against a 40 ms/step base, so 21 % of the episodes carry 77 % of
+the wall time and one arm projects to 25–52 h depending on mean episode length
+(driver header for the measurements) — and two drivers over disjoint arms nearly
+halve the wall clock:
 
 ```bash
 nohup bash experiments/sweep_n17_noise.sh vanilla actionxtext actionxtext15 actionxtext20 > results/sweep/driver_noise.out   2>&1 &
