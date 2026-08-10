@@ -291,8 +291,53 @@ AXES = {
                      # dose step (higher dose listed first, as in axt/axt10)
                      ("axi05", "vanilla"), ("axi10", "axi05"),
                  ]}},
+    # noise: obs-side corruption of the agentview stream. The per-family
+    # breakdown is the point of the axis — the five differ in KIND, not just
+    # strength (motion/glass smear geometry, gauss/zoom soften it, fog is a
+    # low-frequency additive veil), so a locus can help one and not another.
+    #
+    # Like camera, this axis does NOT run the track's default lambda=1 modality
+    # grid (operator grid 2026-08-10, sweep_n17_noise.sh): it runs vanilla plus
+    # the text-locus dose ladder at both query groups. `model_overrides` replaces
+    # the model-level arms/contrasts — without it analyze.py would demand
+    # base0/actionximage/statextext/stateximage/allxall eplogs this campaign
+    # never produces. Only vanilla + a-x-t are mandatory so the axis is
+    # analyzable while the driver is still running; the five ladder rungs join as
+    # `extra_arms` the moment all four of their suite eplogs exist — which on
+    # this axis also covers the two-process split (the a-x-t and all-x-t rows are
+    # run by separate concurrent drivers and can finish in either order).
+    # With no image arm the modality locus pair does not exist here, so the locus
+    # pair is the QUERY-GROUP one: all-x-t vs a-x-t.
     "noise": {"tag": "noise", "cat": noise_cat,
-              "cats": ["motion", "gauss", "zoom", "fog", "glass"]},
+              "cats": ["motion", "gauss", "zoom", "fog", "glass"],
+              "model_overrides": {"n17": {
+                  "arms": ["vanilla", "actionxtext"],
+                  "key_contrasts": [("actionxtext", "vanilla")],
+                  "locus_pair": ("allxtext", "actionxtext"),
+                  "suite_contrasts": [("actionxtext", "vanilla"),
+                                      ("allxtext", "vanilla"),
+                                      ("allxtext20", "vanilla"),
+                                      ("allxtext", "actionxtext")],
+                  "cat_contrasts": [("actionxtext", "vanilla"),
+                                    ("actionxtext20", "vanilla"),
+                                    ("allxtext", "vanilla"),
+                                    ("allxtext20", "vanilla"),
+                                    ("allxtext", "actionxtext")],
+              }},
+              "extra_arms": {"n17": [
+                             "actionxtext15", "actionxtext20",
+                             "allxtext", "allxtext15", "allxtext20"]},
+              "extra_contrasts": {"n17": [
+                  # dose ladder at each locus: vs vanilla and vs the rung below
+                  ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
+                  ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
+                  ("allxtext", "vanilla"), ("allxtext", "actionxtext"),
+                  ("allxtext15", "vanilla"), ("allxtext15", "allxtext"),
+                  ("allxtext20", "vanilla"), ("allxtext20", "allxtext15"),
+                  # query-group locus at matched dose (the lambda=1 pair is
+                  # ("allxtext", "actionxtext") above)
+                  ("allxtext15", "actionxtext15"), ("allxtext20", "actionxtext20"),
+              ]}},
     # camera: agentview re-posing (runtime `_view_` tail). The per-family
     # breakdown is the point of the axis — orbit/orbit_up move the viewpoint,
     # zoom changes scale only, reaim changes bearing only, so a locus can help

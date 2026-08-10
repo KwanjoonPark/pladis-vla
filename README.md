@@ -189,7 +189,7 @@ goes back in` clause is why check (c) measures rather than assumes.
 | `language` | 1,537 | instruction rephrasing only (gate-verified: bddl differs in the `(:language)` line alone) |
 | `layout` | 1,525 | scene changes — added distractors, moved objects/fixtures (BDDL placement resampling) |
 | `robot` | 1,550 | robot init-state offsets, 5 strength levels 0.1–0.5 rad (runtime `Panda{k}` swap) |
-| `noise` | 1,601 | obs-side corruption of the agentview stream: motion / gaussian / zoom blur, fog, glass (5 families × 10 severities) |
+| `noise` | 1,601 | obs-side corruption of the agentview stream, 5 families × 10 severities: motion blur 336, gaussian blur 341, zoom blur 288, fog 272, glass blur 364 |
 | `camera` | 1,599 | agentview re-posing from the runtime `_view_` tail: orbit (yaw ±75°) 443, orbit_up (yaw + 15° elevation) 549, zoom (pivot-ray push-out 115–200 %) 313, reaim (bearing-only ±10°) 294 |
 | `none` (original) | 400 | unperturbed per-task baselines, init states 0–9 |
 
@@ -484,6 +484,23 @@ resume-safe at episode granularity, so re-running a driver skips completed
 arms and executes only what is new. Outputs follow
 `results/sweep/n17_{axis}_{arm}_{suite}_eplog.tsv` (+ a same-named `.out` log
 and, when enabled, `videos/n17_{axis}_{arm}_{suite}/ep#####_{S|F}_{task}.mp4`).
+
+The `noise` driver additionally accepts **arm names as arguments**, which filter
+its arm list (an unknown name aborts; no argument runs all seven). That axis is
+CPU-bound rather than GPU-bound — its per-frame corruption costs 448 ms in the
+motion family against a 45.8 ms/step base, so 21 % of the episodes carry 77 % of
+the wall time and one arm projects to ~26–30 h — and two drivers over disjoint
+arms nearly halve the wall clock:
+
+```bash
+nohup bash experiments/sweep_n17_noise.sh vanilla actionxtext actionxtext15 actionxtext20 > results/sweep/driver_noise.out   2>&1 &
+nohup bash experiments/sweep_n17_noise.sh allxtext allxtext15 allxtext20                  > results/sweep/driver_noise_b.out 2>&1 &
+```
+
+Two concurrent eval processes is the ceiling on a 31 GB box (~10.3 GB RSS each).
+Interleaving cannot break pairing — every RNG source is pinned per episode, not
+per process (§8) — and selecting from a file that is never edited mid-run avoids
+the stale-byte-offset hazard of appending arms to a script bash is executing.
 
 The π0.5 drivers are **suite-outer**: they take the suite as `$1` and walk that
 suite's whole arm list, so one suite pins to one GPU.
