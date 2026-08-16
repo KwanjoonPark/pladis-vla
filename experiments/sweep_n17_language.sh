@@ -96,4 +96,28 @@ run allxt-temp20l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax 
 run allxtext20 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text
 run axt-sxi20  --pladis-install --pladis-scale 2.0 --pladis-cells actionxtext,stateximage
 
+# 2026-08-16 denoising-step schedule row (operator's design; professor's request to
+# analyse the intervention through the flow's time axis). The head integrates N=4
+# Euler steps at t in {0,.25,.5,.75}; --pladis-schedule is a per-step multiplier on
+# --pladis-scale (lambda_i = scale * w_i). Shape row:
+#     vanilla [0,0,0,0]  all [1,1,1,1]  early [1,1,0,0]  late [0,0,1,1]
+#     increasing [0,0.5,1,1.5]          decreasing [1.5,1,0.5,0]
+# Two internally DOSE-MATCHED pairs (sum w: early=late=2, inc=dec=3) plus the sum=4
+# parent, so shape is separable from total dose. The [0,0,0,0] and [1,1,1,1] rows
+# need no run: vanilla is collected, and a flat [1,1,1,1] schedule is bit-identical
+# to the unscheduled arm at the same scale (verify_step_schedule.py gate F) — here
+# that is `allxtext20`.
+# Base dose is lambda=2 on the all-x-text locus — the best arm this axis has
+# measured (allxtext20 87.90 pooled, +2.54pp vs vanilla, z=3.2), so the shapes are
+# read against an effect that exists. Effective lambda per step = 2 * w:
+#     early [2,2,0,0]  late [0,0,2,2]  inc [0,1,2,3]  dec [3,2,1,0]
+# NOTE the ramps peak at lambda=3, one rung above anything this axis has run (the
+# ladder tops at 2.0); that peak sits on a single step, and its dose-matched mirror
+# puts the same peak at the opposite end, so the inc-vs-dec contrast stays
+# interpretable even if lambda=3 is harmful on its own.
+run allxt-early-l2 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 1,1,0,0
+run allxt-late-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+run allxt-inc-l2   --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
+run allxt-dec-l2   --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 1.5,1,0.5,0
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

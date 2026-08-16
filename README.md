@@ -60,6 +60,37 @@ along two axes:
 Cells compose: `--pladis-cells actionxtext,stateximage` installs a different
 query group per key kind in one pass (kinds must be disjoint).
 
+A third axis is **time**. The head is a flow-matching policy integrated with
+N=4 forward-Euler steps at t ∈ {0, .25, .5, .75}
+(`num_inference_timesteps`; `dt = 1/N`, no noise re-injection), and every block
+runs once per step, so a locus also has a position in the denoising trajectory:
+
+| axis | values | mechanism |
+|---|---|---|
+| denoising schedule (`--pladis-schedule`) | `all` / one weight per step, e.g. `1,1,0,0` | per-step multiplier on λ: **λ_i = `--pladis-scale` · w_i**. A DiT forward pre-hook publishes the step index (recovered exactly from the discretized timestep bucket); a zero-weight step takes the vanilla fused-SDPA path |
+
+The weights are read against a λ **base**, which stays the dose knob
+(`--pladis-scale`). The shape row, and its instantiation at the λ=2 base the
+language campaign uses:
+
+| shape | weights `w` | Σw | effective λ per step at base 2 |
+|---|---|---|---|
+| vanilla | `[0,0,0,0]` | 0 | — (no hook) |
+| all | `[1,1,1,1]` | 4 | `[2,2,2,2]` |
+| early | `[1,1,0,0]` | 2 | `[2,2,0,0]` |
+| late | `[0,0,1,1]` | 2 | `[0,0,2,2]` |
+| increasing | `[0,0.5,1,1.5]` | 3 | `[0,1,2,3]` |
+| decreasing | `[1.5,1,0.5,0]` | 3 | `[3,2,1,0]` |
+
+The two same-Σw pairs (early/late, increasing/decreasing) hold total dose fixed
+and vary only *where in the trajectory* it is spent, so shape is separable from
+dose; the all-steps parent (Σw=4) is the reference for both. `[1,1,1,1]` is
+bit-identical to the unscheduled arm at the same scale and needs no separate run
+(`verify_step_schedule.py` gate F). Training-time t is drawn as
+`(1 − Beta(1.5, 1))·0.999`, which puts 35.1 / 29.6 / 22.9 / 12.4 % of the
+training mass in the four intervals the inference grid spans — the halves are not
+equally well trained, and that asymmetry is part of what the contrast measures.
+
 ### 1.3 Intervention loci in π0.5
 
 π0.5 has **no cross-attention module**. Its action ("suffix") tokens attend
@@ -132,6 +163,7 @@ corresponds to the **action row** of the 2×2 grid of §1.2, extended along λ.
 | locus cells | `--pladis-scale λ --pladis-qgroup {state,action,all} --pladis-kind {text,image,all}` | the interventions under study |
 | mixed cells | `--pladis-scale λ --pladis-cells <cell,cell>` | per-kind query groups |
 | temperature control | `--pladis-scale 1.0 --pladis-method softmax --pladis-beta β` | sharpened-softmax counterpart to a sparse cell |
+| step-scheduled cell | `--pladis-scale λ --pladis-qgroup … --pladis-kind … --pladis-schedule 1,1,0,0` | a locus cell with a per-step λ profile, λ_i = λ·w_i (§1.2); its all-steps parent and its same-Σw mirror are the paired references |
 
 **The control arms differ between tracks, and not arbitrarily.** GR00T's vanilla
 runs fused SDPA while λ>0 must materialize weights on an eager path, so `base0`
@@ -320,6 +352,15 @@ machine or after dependency changes, run in order:
    `--mode video` renders the unperturbed episode and all four viewpoint
    families side by side under identical scripted actions, re-asserting the
    isolation invariants per frame before it writes).
+4b. **Step-schedule gate (CPU)** — `verify_step_schedule.py`: the timestep-bucket
+   ↔ step-index map is exact for N ∈ {1,2,3,4,8,16}; a zero-weight step is
+   `torch.equal` to diffusers' `AttnProcessor2_0` while a weighted step equals a
+   plain processor at λ = scale·w; `[1,1,1,1]` reproduces the unscheduled arm
+   bit-for-bit and the default (`all`) path is unchanged; the DiT pre-hook
+   publishes the right index and rejects a mixed-timestep batch; wrong-length,
+   all-zero, conflicting and unresolvable schedules raise; `assert_delivered()`
+   catches a never-fired probe and a weighted step the loop never reaches. Needs
+   no checkpoint and no GPU.
 5. **π0.5 hook smoke (CPU)** — `verify_pi05_hook.py`: λ=0 and prefix passes
    bit-identical to stock gemma eager attention; kind blend ≡ the official
    FLUX mass-preserving formulation; row/block-mass preservation; β=1
@@ -438,6 +479,7 @@ bash experiments/run.sh experiments/eval_arm.py \
 | `--pladis-scale` / `--pladis-method` / `--pladis-beta` | λ, sparse transform, sparse-branch inverse temperature (§1.1) |
 | `--pladis-qgroup` / `--pladis-kind` / `--pladis-cells` | intervention locus (§1.2) |
 | `--pladis-n-state-tokens` | leading state query rows (N1.7: 1); defines the `state`/`action` split |
+| `--pladis-schedule` | N1.7 only: per-denoising-step multiplier on λ (`all` default, or one weight per step, e.g. `1,1,0,0` / `0,0.5,1,1.5`). Zero-weight steps run vanilla, so this is the **time** coordinate of the locus (§1.2) |
 | `--model` | `gr00t_n17` (default) or `pi05`; selects the loader **and** the hook |
 
 The same evaluator runs the π0.5 track:

@@ -229,7 +229,16 @@ AXES = {
                                 "stateximage20", "statextext20",
                                 "allxtext20", "axt-sxi20",
                                 "axt-temp20l15", "axt-temp20l20",
-                                "allxt-temp20", "allxt-temp20l15", "allxt-temp20l20"]},
+                                "allxt-temp20", "allxt-temp20l15", "allxt-temp20l20",
+                                # 08-16 denoising-step schedule row on all-x-text at
+                                #   lambda=2 (this axis's best arm, allxtext20):
+                                #   weights early [1,1,0,0], late [0,0,1,1],
+                                #   inc [0,.5,1,1.5], dec [1.5,1,.5,0], so effective
+                                #   lambda/step = 2*w. The [1,1,1,1] row IS the
+                                #   parent allxtext20 (bit-identical), so it is not
+                                #   a separate arm.
+                                "allxt-early-l2", "allxt-late-l2",
+                                "allxt-inc-l2", "allxt-dec-l2"]},
                  "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -277,6 +286,20 @@ AXES = {
                      ("allxt-temp20l15", "allxt-temp20"),
                      ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxt-temp20l15"),
                      ("allxt-temp20l15", "axt-temp20l15"),
+                     # 08-16 denoising-step schedule: WHEN in the 4-step Euler loop
+                     # the intervention acts. The two primary tests are the
+                     # internally dose-matched shape pairs — early vs late (sum
+                     # w = 2) and increasing vs decreasing (sum w = 3) — which hold
+                     # total dose fixed and vary only its position in time. Each arm
+                     # is also read against vanilla and against its all-steps parent
+                     # allxtext20 (sum w = 4, same lambda=2 base), which is what
+                     # separates "position in time" from "less total dose".
+                     ("allxt-early-l2", "allxt-late-l2"),
+                     ("allxt-inc-l2", "allxt-dec-l2"),
+                     ("allxt-early-l2", "vanilla"), ("allxt-late-l2", "vanilla"),
+                     ("allxt-inc-l2", "vanilla"), ("allxt-dec-l2", "vanilla"),
+                     ("allxt-early-l2", "allxtext20"), ("allxt-late-l2", "allxtext20"),
+                     ("allxt-inc-l2", "allxtext20"), ("allxt-dec-l2", "allxtext20"),
                  ],
                  "smolvla": [
                      ("axt10", "axi10"),               # locus contrast at 1.0

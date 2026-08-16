@@ -57,6 +57,7 @@ bash experiments/run.sh experiments/verify_layout_axis.py --mode gates
 bash experiments/run.sh experiments/verify_robot_axis.py
 bash experiments/run.sh experiments/verify_noise_axis.py
 bash experiments/run.sh experiments/verify_camera_axis.py            # --mode video
+bash experiments/run.sh experiments/verify_step_schedule.py   # --pladis-steps gate
 ```
 
 `verify_camera_axis.py --mode video` writes one mp4 with the unperturbed

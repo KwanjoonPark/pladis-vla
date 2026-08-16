@@ -66,6 +66,13 @@ _METHOD_ALIAS = {
     "pi05": {"ent15max": "entmax15"},
     "smolvla": {"ent15max": "entmax15"},
 }
+# The step axis needs a per-step index published by a hook on the denoising loop;
+# only attn_gr00t_n17 has one. Accepting the flag silently on the other tracks would
+# log a scheduled arm that ran on every step.
+_SCHEDULE_TRACK_MSG = (
+    "[arm] --pladis-schedule is gr00t_n17-only: the pi05/smolvla hooks carry no "
+    "denoising-step probe, so a schedule cannot be enforced there."
+)
 
 
 def parse_args():
@@ -134,6 +141,13 @@ def parse_args():
     p.add_argument("--pladis-n-state-tokens", type=int, default=None,
                    help="leading state query rows; splits the [state; action] "
                         "sequence for --pladis-qgroup (default: per model)")
+    p.add_argument("--pladis-schedule", default="all",
+                   help="gr00t_n17 only: per-denoising-step MULTIPLIER on "
+                        "--pladis-scale, one weight per step, e.g. '1,1,0,0' (early) "
+                        "or '0,0.5,1,1.5' (increasing ramp); default 'all' = one "
+                        "strength everywhere. The head runs N=4 Euler steps at "
+                        "t in {0,.25,.5,.75}; a zero-weight step takes the vanilla "
+                        "fused-SDPA path, so this is the TIME coordinate of the locus")
     # pi0.5 key-axis geometry: [image(0:ni) | language(ni:ni+nl) | suffix]. Defaults are
     # the real pi05_libero layout — 3 image slots x 256 + max_token_len 200 = 968 prefix,
     # suffix = action_horizon 10. Re-validated against the live key_len at run time
@@ -209,12 +223,29 @@ def parse_args():
             raise SystemExit("[arm] --pladis-cells is gr00t_n17-only (per-kind qgroups).")
         if args.pladis_n_state_tokens != 1:
             raise SystemExit("[arm] --pladis-n-state-tokens is gr00t_n17-only.")
+        if args.pladis_schedule != "all":
+            raise SystemExit(_SCHEDULE_TRACK_MSG)
         if (args.pladis_n_img, args.pladis_n_lang_max) != _SMOLVLA_GEOM_DEFAULTS:
             raise SystemExit(
                 "[arm] --pladis-n-img/--pladis-n-lang-max are smolvla-only "
                 "(pi05 geometry flags: --pladis-n-img-prefix/--pladis-n-lang)."
             )
     elif args.model == "gr00t_n17":
+        if args.pladis_schedule != "all":
+            # Parse here, before the model load, so a typo ('1-1-0-0', 'early') costs
+            # a second rather than a suite's worth of startup. The length-vs-N and
+            # all-zero checks need the live head and stay in install_pladis.
+            from pladis.attn_gr00t_n17 import parse_schedule
+
+            try:
+                parse_schedule(args.pladis_schedule)
+            except ValueError as exc:
+                raise SystemExit(f"[arm] --pladis-schedule {args.pladis_schedule!r}: {exc}")
+            if not args.pladis_install:
+                raise SystemExit(
+                    "[arm] --pladis-schedule without --pladis-install: a schedule with "
+                    "no hook is a vanilla arm wearing an intervention's name."
+                )
         if args.pladis_kind not in ("all", "text", "image"):
             raise SystemExit(
                 "[arm] gr00t_n17 selects whole cross blocks: --pladis-kind all|text|"
@@ -226,6 +257,8 @@ def parse_args():
     elif args.model == "smolvla":
         if args.pladis_cells:
             raise SystemExit("[arm] --pladis-cells is gr00t_n17-only (per-kind qgroups).")
+        if args.pladis_schedule != "all":
+            raise SystemExit(_SCHEDULE_TRACK_MSG)
         if args.pladis_qgroup == "state":
             raise SystemExit(
                 "[arm] --pladis-qgroup state is invalid for smolvla: the expert suffix "
@@ -360,6 +393,30 @@ def _assert_smolvla_delivery(sess, ts, first_spec, model) -> None:
           f"forward(s), prefix_len={CFG.prefix_len}", flush=True)
 
 
+def _assert_n17_step_delivery(sess, ts, first_spec, model) -> None:
+    """gr00t_n17 counterpart for --pladis-schedule: prove the blend fired at exactly
+    the weighted denoising steps, at the right strengths, BEFORE logging an episode.
+
+    Block selection is already proven by install_pladis's non-empty return, but the
+    step gate is enforced at RUN time by a forward pre-hook, so nothing before the
+    first inference can tell whether it fires. A probe bound to a DiT the serving
+    path never calls, or a schedule naming steps the loop never reaches, would run
+    the arm as vanilla (or at full schedule) for all 1,537 episodes while the eplog
+    and .arm sidecar claim a partial schedule.
+
+    RNG containment is the same as the pi05/smolvla warm-ups: run_episode reseeds the
+    global stream before every chunk (harness/rollout.py:131) and sess.reset() re-runs
+    for real when the loop starts, so the logged rollout is bit-identical to one
+    without the warm-up.
+    """
+    from pladis.attn_gr00t_n17 import assert_delivered
+
+    raw_obs, instruction = sess.reset(first_spec, ts.init_states_of(first_spec.task_name))
+    with torch.no_grad():
+        model.predict_chunk(model.wrap_obs(raw_obs, instruction))
+    print(f"[arm] PLADIS step schedule delivered: {assert_delivered()}", flush=True)
+
+
 def main():
     args, spec = parse_args()
     axis = None if args.axis == "none" else args.axis
@@ -402,6 +459,17 @@ def main():
             f"ns{args.pladis_n_state_tokens}"
         )
     else:
+        # The denoising-step schedule is part of the locus, so it belongs in the
+        # signature — but APPENDED ONLY WHEN NON-DEFAULT, the same append-only
+        # discipline as pi05's backend_clause: the 44k+ episodes already logged on
+        # this track were written before the step axis existed and must keep
+        # resuming byte-identically (harness/eplog.py:62-80 aborts on any change).
+        if args.pladis_schedule == "all":
+            steps_clause = ""
+        else:
+            from pladis.attn_gr00t_n17 import fmt_schedule, parse_schedule
+
+            steps_clause = f",sched{fmt_schedule(parse_schedule(args.pladis_schedule))}"
         pladis_clause = (
             f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
             f"b{args.pladis_beta:g},"
@@ -409,6 +477,7 @@ def main():
                if args.pladis_cells
                else f"q{args.pladis_qgroup},k{args.pladis_kind},")
             + f"ns{args.pladis_n_state_tokens}"
+            + steps_clause
         )
 
     arm_signature = "|".join(
@@ -500,6 +569,7 @@ def main():
                 method=args.pladis_method,
                 beta=args.pladis_beta,
                 n_state_tokens=args.pladis_n_state_tokens,
+                schedule=args.pladis_schedule,
             )
         else:
             installed = hooks.install_pladis(
@@ -510,6 +580,7 @@ def main():
                 kind=args.pladis_kind,
                 qgroup=args.pladis_qgroup,
                 n_state_tokens=args.pladis_n_state_tokens,
+                schedule=args.pladis_schedule,
             )
         print(f"[arm] PLADIS installed on blocks {installed}", flush=True)
     else:
@@ -530,6 +601,9 @@ def main():
         arm_tag = f"{args.pladis_kind} keys (s={args.pladis_scale:g})"
     else:
         arm_tag = f"{args.pladis_qgroup} x {args.pladis_kind} (s={args.pladis_scale:g})"
+    if args.pladis_install and args.pladis_schedule != "all":
+        # the schedule is part of what a reviewer watching the video is judging
+        arm_tag += f" sched {args.pladis_schedule}"
     video_label = f"{model_tag} | {arm_tag}"
 
     from harness.env import RUNTIME_RNG_AXES
@@ -540,6 +614,9 @@ def main():
         _assert_pi05_delivery(sess, ts, todo[0], model)
     elif args.model == "smolvla" and args.pladis_install:
         _assert_smolvla_delivery(sess, ts, todo[0], model)
+    elif (args.model == "gr00t_n17" and args.pladis_install
+          and args.pladis_schedule != "all"):
+        _assert_n17_step_delivery(sess, ts, todo[0], model)
 
     instruction_map = (
         (lambda spec: _task_meta_instruction(spec.base_task))
