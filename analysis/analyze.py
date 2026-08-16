@@ -452,6 +452,42 @@ AXES = {
                   ("allxt-temp20l25", "vanilla"), ("allxt-temp20l25", "allxtext25"),
                   ("allxt-temp20l25", "allxt-temp20l20"),
               ]}},
+    # original: axis=none — original instructions, original scenes, nothing
+    # perturbed. This is the campaign's IN-DISTRIBUTION control, and the reason
+    # it is worth arms rather than just a vanilla baseline: every positive we
+    # have is on instruction-OOD (language), so the grounding-specificity claim
+    # predicts the SAME intervention does nothing here. There are no perturbation
+    # categories to stratify by, and no severity table (the baseline would be
+    # this arm against itself), so both are switched off.
+    #   Two eras share the prefix: the 2026-07-16 lambda=1 modality grid at 400
+    # eps/arm, and the 08-16 all-x-text sharp-softmax dose row at 2,000 (init
+    # 0-49). Contrasts run on the common prefix; see the length note above.
+    "original": {"tag": "orig", "cat": None, "cats": [],
+                 "model_overrides": {"n17": {
+                     "arms": ["vanilla", "actionxtext"],
+                     "key_contrasts": [("actionxtext", "vanilla")],
+                     "locus_pair": ("actionxtext", "actionximage"),
+                     "suite_contrasts": [("actionxtext", "vanilla"),
+                                         ("actionximage", "vanilla"),
+                                         ("allxt-temp20l20", "vanilla")],
+                 }},
+                 "extra_arms": {"n17": [
+                                "base0", "actionximage", "statextext",
+                                "stateximage", "allxall",
+                                "allxt-temp20", "allxt-temp20l15",
+                                "allxt-temp20l20"]},
+                 "extra_contrasts": {"n17": [
+                     # the 07-16 lambda=1 modality grid, each vs vanilla, plus
+                     # the locus contrast that carries the story on language
+                     ("base0", "vanilla"), ("actionximage", "vanilla"),
+                     ("statextext", "vanilla"), ("stateximage", "vanilla"),
+                     ("allxall", "vanilla"),
+                     ("actionxtext", "actionximage"),
+                     # 08-16 in-dist dose row: vs vanilla and vs the rung below
+                     ("allxt-temp20", "vanilla"),
+                     ("allxt-temp20l15", "vanilla"), ("allxt-temp20l15", "allxt-temp20"),
+                     ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxt-temp20l15"),
+                 ]}},
 }
 
 def load(prefix, arm):
@@ -502,9 +538,30 @@ def main():
             print(f"[note] extra arm {a!r}: eplogs missing/incomplete, skipped")
 
     data = {arm: load(prefix, arm) for arm in arms}
-    keys = sorted(data["vanilla"].keys())
-    for arm in arms:  # schedule identity across arms
-        assert set(data[arm].keys()) == set(keys), f"episode-set mismatch: {arm}"
+    # Arms must be paired, but they may legitimately differ in LENGTH: env.py's
+    # schedule is prefix-determined (schedule(N,seed)[:M] == schedule(M,seed)),
+    # so raising --episodes extends an arm rather than reshuffling it, and the
+    # original axis now mixes a 2,000-ep dose row with the 400-ep lambda=1 grid
+    # of 2026-07-16. Nested is fine; CROSSING is a pairing bug. Enforced by
+    # requiring each arm's episode indices to be contiguous from 0 per suite —
+    # then the sets are nested by construction and the common prefix is the
+    # widest honest comparison. A gap (a half-resumed arm) still aborts.
+    for arm in arms:
+        for s in SUITES:
+            idx = sorted(k[1] for k in data[arm] if k[0] == s)
+            assert idx == list(range(len(idx))), (
+                f"{arm}/{s}: episode indices not contiguous from 0 "
+                f"(gap at {next(i for i, v in enumerate(idx) if i != v)}) — "
+                f"a partially-resumed eplog cannot be paired")
+    n_common = {s: min(sum(1 for k in data[a] if k[0] == s) for a in arms)
+                for s in SUITES}
+    keys = sorted(k for k in data["vanilla"].keys() if k[1] < n_common[k[0]])
+    short = {a: sum(1 for k in data[a]) for a in arms if len(data[a]) > len(keys)}
+    if short:
+        print(f"[note] arms differ in length; comparing the common prefix "
+              f"({len(keys)} eps). Longer arms truncated for contrasts: "
+              + ", ".join(f"{a}={n}" for a, n in sorted(short.items())))
+    for arm in arms:  # schedule identity across arms, on the common prefix
         for k in keys:
             assert data[arm][k]["task_name"] == data["vanilla"][k]["task_name"], (arm, k)
 
@@ -550,14 +607,24 @@ def main():
         if c[0] in arms and c[1] in arms
     ]
     m = len(contrasts)
+    # Each contrast runs on the episodes ITS OWN two arms share, not on the
+    # global common prefix. When arm lengths differ, the global prefix is set by
+    # the shortest arm on the axis, which would silently drag an unrelated pair
+    # down to it — on the original axis that would hold the 2,000-ep dose row to
+    # the 400 eps of the 2026-07-16 lambda=1 grid and throw away the precision
+    # the longer run was paid for. Pairing is unaffected: the schedule is
+    # prefix-determined, so a pair's shared episodes are the same episodes.
+    pair_keys = lambda a, b: [k for k in data[a] if k in data[b]]
     print(f"\n== paired McNemar, pooled (Bonferroni m={m}, alpha=.05 -> "
           f"p<{0.05 / m:.4f}) ==")
     for a, b in contrasts:
-        n01, n10, z, p = mcnemar(data[a], data[b], keys)
-        d = sr(a, keys) - sr(b, keys)
+        ks = pair_keys(a, b)
+        n01, n10, z, p = mcnemar(data[a], data[b], ks)
+        d = sr(a, ks) - sr(b, ks)
         mark = "*" if p < 0.05 / m else (" " if p >= 0.05 else ".")
+        n_note = "" if len(ks) == len(keys) else f"  n={len(ks)}"
         print(f"  {a:13s} - {b:13s} {d:+6.2f}pp  disc {n01:3d}:{n10:3d}"
-              f"  z={z:+5.2f}  p={p:.4g}  p_bonf={min(1.0, p * m):.4g} {mark}")
+              f"  z={z:+5.2f}  p={p:.4g}  p_bonf={min(1.0, p * m):.4g} {mark}{n_note}")
     print("  (* survives Bonferroni; . nominal p<.05 only)")
 
     print("\n== key contrasts per suite ==")
@@ -584,7 +651,9 @@ def main():
     # assumed: without the guard a missing file makes the whole analysis unusable until
     # the original sweep finishes, when everything above it is already valid.
     orig_paths = [SWEEP / f"{mcfg['tag']}_orig_vanilla_{s}_eplog.tsv" for s in SUITES]
-    if not all(p.exists() for p in orig_paths):
+    if axis == "original":
+        pass  # the reference sweep IS this axis; a self-comparison is 0.0 by construction
+    elif not all(p.exists() for p in orig_paths):
         missing = [p.name for p in orig_paths if not p.exists()]
         print(f"\n[note] severity baseline skipped: missing {missing} "
               f"(run experiments/sweep_{mcfg['tag']}_original.sh)")
