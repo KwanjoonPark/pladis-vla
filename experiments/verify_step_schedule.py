@@ -22,10 +22,12 @@ increasing [0,.5,1,1.5] / decreasing [1.5,1,.5,0]).
   E. install_pladis defenses: a length != N schedule raises, an all-zero effective
      schedule raises (vanilla wearing an intervention's name), conflicting per-cell
      schedules raise, and a schedule with no resolvable head raises.
-  F. End-to-end on a mini DiT, for all five shapes of the 08-16 design: the loop
-     blends exactly at the non-zero steps with the right lambda, the zero steps are
-     bit-identical to vanilla, [1,1,1,1] is bit-identical to the unscheduled arm at
-     the same scale, and assert_delivered() reports the census.
+  F. End-to-end on a mini DiT, for all five shapes of the 08-16 design and BOTH
+     sparse branches the row is run on (entmax-1.5, and the 08-17 sharp-softmax
+     counterpart at beta=2): the loop blends exactly at the non-zero steps with
+     the right lambda, the zero steps are bit-identical to vanilla, [1,1,1,1] is
+     bit-identical to the unscheduled arm at the same scale and branch, and
+     assert_delivered() reports the census.
   G. assert_delivered() converts the silent failures into errors: never-fired
      probe, weighted step never reached, no blended call.
 
@@ -247,41 +249,50 @@ def gate_F():
     vanilla = _fresh_model(seed=1)
     ref = _run_loop(vanilla, h, enc)
 
-    # scale 1 = the shape row as written; scale 2 = the lambda base the 08-16
-    # language campaign runs (allxt-*-l2), where inc/dec peak at lambda=3
-    for scale in (1.0, 2.0):
-        # the unscheduled arm at this scale: what "all" must reproduce bit-for-bit
-        flat = _fresh_model(seed=1)
-        install_pladis(flat, pladis_scale=scale, kind="text")
-        ref_flat = _run_loop(flat, h, enc)
+    # Both sparse branches the shape row is run on. The schedule gates lambda
+    # (attn_gr00t_n17.py:231) and the branch is only reached once lambda != 0
+    # (:305-331), so the two are orthogonal by construction — but the 08-17 temp
+    # row burns ~19h on that composition, so it is asserted rather than argued.
+    # beta=2 is the ent15-strength-matched setting the campaign uses; beta=1 would
+    # make sparse == dense and turn every "did blend" assertion below into a
+    # false negative, which is exactly the silent failure this gate exists for.
+    for method, beta in (("ent15max", 1.0), ("softmax", 2.0)):
+        # scale 1 = the shape row as written; scale 2 = the lambda base the 08-16
+        # language campaign runs (allxt-*-l2), where inc/dec peak at lambda=3
+        for scale in (1.0, 2.0):
+            # the unscheduled arm at this scale: what "all" must reproduce bit-for-bit
+            flat = _fresh_model(seed=1)
+            install_pladis(flat, pladis_scale=scale, kind="text", method=method, beta=beta)
+            ref_flat = _run_loop(flat, h, enc)
 
-        for name, weights in SHAPES.items():
-            m = _fresh_model(seed=1)
-            installed = install_pladis(
-                m, pladis_scale=scale, kind="text",
-                schedule=",".join(f"{w:g}" for w in weights),
-            )
-            assert installed == [0, 4], installed  # text cross blocks of an 8-block DiT
-            outs = _run_loop(m, h, enc)
-            active = {i for i, w in enumerate(weights) if w != 0}
-            for i in range(4):
-                if i in active:
-                    assert not torch.equal(outs[i], ref[i]), \
-                        f"F[{name}@{scale:g}]: step {i} did not blend"
-                else:
-                    assert torch.equal(outs[i], ref[i]), \
-                        f"F[{name}@{scale:g}]: step {i} not bit-identical to vanilla"
-            if name == "all":
+            for name, weights in SHAPES.items():
+                tag = f"{name}@{method}b{beta:g}@lambda{scale:g}"
+                m = _fresh_model(seed=1)
+                installed = install_pladis(
+                    m, pladis_scale=scale, kind="text", method=method, beta=beta,
+                    schedule=",".join(f"{w:g}" for w in weights),
+                )
+                assert installed == [0, 4], installed  # text cross blocks of an 8-block DiT
+                outs = _run_loop(m, h, enc)
+                active = {i for i, w in enumerate(weights) if w != 0}
                 for i in range(4):
-                    assert torch.equal(outs[i], ref_flat[i]), \
-                        f"F[all@{scale:g}]: flat schedule != unscheduled arm at same scale"
-            assert set(SCHED.n_applied) == active
-            assert set(SCHED.n_skipped) == set(range(4)) - active
-            assert sum(SCHED.n_applied.values()) == 2 * len(active)  # 2 text blocks
-            assert all(abs(SCHED.lam[i] - scale * weights[i]) < 1e-9 for i in active)
-            census = assert_delivered()
-            assert f"schedule={fmt_schedule(weights)}" in census
-            print(f"PASS gate F[{name}@lambda{scale:g}]: {census}")
+                    if i in active:
+                        assert not torch.equal(outs[i], ref[i]), \
+                            f"F[{tag}]: step {i} did not blend"
+                    else:
+                        assert torch.equal(outs[i], ref[i]), \
+                            f"F[{tag}]: step {i} not bit-identical to vanilla"
+                if name == "all":
+                    for i in range(4):
+                        assert torch.equal(outs[i], ref_flat[i]), \
+                            f"F[{tag}]: flat schedule != unscheduled arm at same scale"
+                assert set(SCHED.n_applied) == active
+                assert set(SCHED.n_skipped) == set(range(4)) - active
+                assert sum(SCHED.n_applied.values()) == 2 * len(active)  # 2 text blocks
+                assert all(abs(SCHED.lam[i] - scale * weights[i]) < 1e-9 for i in active)
+                census = assert_delivered()
+                assert f"schedule={fmt_schedule(weights)}" in census
+                print(f"PASS gate F[{tag}]: {census}")
 
 
 def gate_G():

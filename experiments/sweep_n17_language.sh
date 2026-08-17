@@ -120,4 +120,22 @@ run allxt-late-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pla
 run allxt-inc-l2   --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
 run allxt-dec-l2   --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 1.5,1,0.5,0
 
+# 2026-08-17 sharp-softmax mirror of the schedule row (operator request): the same
+# four shapes with the sparse branch swapped entmax-1.5 -> softmax(beta*l) at
+# beta=2, the ent15-strength-matched setting of supp G.1. Everything else is held:
+# same all-x-text locus, same lambda=2 base, same weights, same paired schedule.
+# The matched parent is allxt-temp20l20 (all-x-text, lambda=2, beta=2), which is
+# already collected and scored 87.90 pooled — the SAME value as the entmax parent
+# allxtext20, so the two shape rows start from an equal footing and the entmax-vs-
+# temp comparison is a clean branch swap at every point of the row. As above, the
+# flat [1,1,1,1] row needs no arm: it is bit-identical to allxt-temp20l20
+# (verify_step_schedule.py gate F, now asserted on the softmax branch too).
+# This asks whether "the benefit lives in the late denoising steps" is a property
+# of the sharpening itself or of entmax's exact zeros — the same zeros-not-special
+# question the campaign has answered on the dose axis, now on the time axis.
+run allxt-temp20-early-l2 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 1,1,0,0
+run allxt-temp20-late-l2  --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+run allxt-temp20-inc-l2   --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
+run allxt-temp20-dec-l2   --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 1.5,1,0.5,0
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

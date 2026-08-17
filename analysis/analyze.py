@@ -238,7 +238,13 @@ AXES = {
                                 #   parent allxtext20 (bit-identical), so it is not
                                 #   a separate arm.
                                 "allxt-early-l2", "allxt-late-l2",
-                                "allxt-inc-l2", "allxt-dec-l2"]},
+                                "allxt-inc-l2", "allxt-dec-l2",
+                                # 08-17 sharp-softmax mirror of that row: same
+                                #   shapes, same lambda=2 all-x-text base, sparse
+                                #   branch swapped to softmax(2*l). Parent =
+                                #   allxt-temp20l20 (the flat row, bit-identical).
+                                "allxt-temp20-early-l2", "allxt-temp20-late-l2",
+                                "allxt-temp20-inc-l2", "allxt-temp20-dec-l2"]},
                  "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -300,6 +306,23 @@ AXES = {
                      ("allxt-inc-l2", "vanilla"), ("allxt-dec-l2", "vanilla"),
                      ("allxt-early-l2", "allxtext20"), ("allxt-late-l2", "allxtext20"),
                      ("allxt-inc-l2", "allxtext20"), ("allxt-dec-l2", "allxtext20"),
+                     # 08-17 sharp-softmax mirror: the same three readings as the
+                     # entmax row (dose-matched shape pairs, vs vanilla, vs the
+                     # flat parent allxt-temp20l20), plus the branch swap read
+                     # shape-for-shape against its entmax twin — which is where
+                     # "are exact zeros special?" gets asked on the TIME axis.
+                     ("allxt-temp20-early-l2", "allxt-temp20-late-l2"),
+                     ("allxt-temp20-inc-l2", "allxt-temp20-dec-l2"),
+                     ("allxt-temp20-early-l2", "vanilla"), ("allxt-temp20-late-l2", "vanilla"),
+                     ("allxt-temp20-inc-l2", "vanilla"), ("allxt-temp20-dec-l2", "vanilla"),
+                     ("allxt-temp20-early-l2", "allxt-temp20l20"),
+                     ("allxt-temp20-late-l2", "allxt-temp20l20"),
+                     ("allxt-temp20-inc-l2", "allxt-temp20l20"),
+                     ("allxt-temp20-dec-l2", "allxt-temp20l20"),
+                     ("allxt-temp20-early-l2", "allxt-early-l2"),
+                     ("allxt-temp20-late-l2", "allxt-late-l2"),
+                     ("allxt-temp20-inc-l2", "allxt-inc-l2"),
+                     ("allxt-temp20-dec-l2", "allxt-dec-l2"),
                  ],
                  "smolvla": [
                      ("axt10", "axi10"),               # locus contrast at 1.0
