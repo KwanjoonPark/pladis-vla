@@ -69,7 +69,8 @@ SUITES="libero_10 libero_goal libero_object libero_spatial"
 # The axis's arm vocabulary, in run order. A command-line selection only FILTERS
 # this list — it can never introduce an arm — so an unknown name is an abort
 # rather than a driver that quietly runs nothing for four days.
-ARMS="vanilla actionxtext actionxtext15 actionxtext20 allxtext allxtext15 allxtext20"
+ARMS="vanilla actionxtext actionxtext15 actionxtext20 allxtext allxtext15 allxtext20 \
+allxt-late-l2 allxt-inc-l2"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -106,5 +107,36 @@ run actionxtext20 --pladis-install --pladis-scale 2.0 --pladis-qgroup action --p
 run allxtext      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pladis-kind text
 run allxtext15    --pladis-install --pladis-scale 1.5 --pladis-qgroup all    --pladis-kind text
 run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all    --pladis-kind text
+
+
+# 2026-08-18 denoising-step schedule row (operator request; the language axis's
+# 08-16/17 finding carried onto the other perturbation axes). On language the
+# benefit lives in the LATE denoising steps: at lambda=2 on all-x-text, late
+# [0,0,1,1] scored +2.86pp vs vanilla (z=3.64 — the axis's only Bonferroni-
+# surviving arm-vs-vanilla result) and inc [0,0.5,1,1.5] +2.80 (z=3.37), while
+# early [1,1,0,0] was -1.30 and late-minus-early +4.16 (z=5.00, Bonf*): the SAME
+# total dose helps or hurts depending on WHERE in the flow's time axis it is spent.
+# On THIS axis the flat parent allxtext20 read -0.25pp vs vanilla (z=-0.30) and
+# every one of the six entmax ladder cells came in flat, so the question is
+# whether that null is a null or a CANCELLATION: early-step harm plus late-step
+# benefit summing to zero. Dropping the early half is the direct test.
+# COST: ~20 h per arm at this axis's measured 45 s/ep x 1,601 eps (the corruption
+# call, not the GPU, sets it), i.e. ~40 h for the pair sequentially. They are
+# disjoint arms, so the two-driver split this file already documents halves it:
+#   nohup bash experiments/sweep_n17_noise.sh allxt-late-l2 > results/sweep/driver_noise_late.out 2>&1 &
+#   nohup bash experiments/sweep_n17_noise.sh allxt-inc-l2  > results/sweep/driver_noise_inc.out  2>&1 &
+# Two arms, not the four-shape row, because this axis already carries the iso-dose
+# flat controls the other two shapes would have supplied. Writing the
+# time-integrated dose as sum_i lambda_i over the N=4 Euler steps (lambda_i =
+# scale * w_i, so both arms peak at lambda=3 on their last step):
+#     late [0,0,2,2] = 4 = flat lambda=1   (allxtext,   collected)
+#     inc  [0,1,2,3] = 6 = flat lambda=1.5 (allxtext15, collected)
+# so each new arm is read three ways: vs vanilla, vs its flat parent allxtext20
+# ([2,2,2,2], sum 8 — same peak lambda, twice the total dose), and vs the
+# collected flat arm at the SAME total dose — the contrast that separates WHEN
+# the intervention acts from HOW MUCH of it there is. The [1,1,1,1] row needs no
+# arm: it is bit-identical to allxtext20 (verify_step_schedule.py gate F).
+run allxt-late-l2 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
 
 echo "[noise] ALL DONE $(date +%H:%M:%S)"

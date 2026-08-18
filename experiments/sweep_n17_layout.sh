@@ -66,4 +66,30 @@ run stateximage20 --pladis-install --pladis-scale 2.0 --pladis-qgroup state --pl
 run axt-sxi15     --pladis-install --pladis-scale 1.5 --pladis-cells actionxtext,stateximage
 run axt-sxi20     --pladis-install --pladis-scale 2.0 --pladis-cells actionxtext,stateximage
 
+
+# 2026-08-18 denoising-step schedule row (operator request; the language axis's
+# 08-16/17 finding carried onto the other perturbation axes). On language the
+# benefit lives in the LATE denoising steps: at lambda=2 on all-x-text, late
+# [0,0,1,1] scored +2.86pp vs vanilla (z=3.64 — the axis's only Bonferroni-
+# surviving arm-vs-vanilla result) and inc [0,0.5,1,1.5] +2.80 (z=3.37), while
+# early [1,1,0,0] was -1.30 and late-minus-early +4.16 (z=5.00, Bonf*): the SAME
+# total dose helps or hurts depending on WHERE in the flow's time axis it is spent.
+# On THIS axis the flat parent allxtext20 read -1.70pp vs vanilla (z=-1.91, n.s.,
+# the axis's most negative text-locus rung), so the question is whether that is a
+# null or a CANCELLATION: early-step harm plus late-step benefit summing to zero.
+# Dropping the early half is the direct test.
+# Two arms, not the four-shape row, because this axis already carries the iso-dose
+# flat controls the other two shapes would have supplied. Writing the
+# time-integrated dose as sum_i lambda_i over the N=4 Euler steps (lambda_i =
+# scale * w_i, so both arms peak at lambda=3 on their last step):
+#     late [0,0,2,2] = 4 = flat lambda=1   (allxtext,   collected)
+#     inc  [0,1,2,3] = 6 = flat lambda=1.5 (allxtext15, collected)
+# so each new arm is read three ways: vs vanilla, vs its flat parent allxtext20
+# ([2,2,2,2], sum 8 — same peak lambda, twice the total dose), and vs the
+# collected flat arm at the SAME total dose — the contrast that separates WHEN
+# the intervention acts from HOW MUCH of it there is. The [1,1,1,1] row needs no
+# arm: it is bit-identical to allxtext20 (verify_step_schedule.py gate F).
+run allxt-late-l2 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
+
 echo "[layout] ALL DONE $(date +%H:%M:%S)"

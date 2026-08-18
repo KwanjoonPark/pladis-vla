@@ -59,7 +59,8 @@ wait_ckpt() {
 # this list — it can never introduce an arm — so an unknown name is an abort
 # rather than a driver that quietly runs nothing.
 ARMS="vanilla base0 actionximage actionxtext statextext stateximage allxall \
-allxt-temp20l20 allxt-temp20l15 allxt-temp20"
+allxt-temp20l20 allxt-temp20l15 allxt-temp20 \
+allxtext20 allxt-late-l2 allxt-inc-l2"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -104,5 +105,31 @@ run allxall      --pladis-install --pladis-scale 1.0 --pladis-qgroup all    --pl
 run allxt-temp20l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
 run allxt-temp20l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
 run allxt-temp20    --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
+
+
+# 08-18 IN-DISTRIBUTION CONTROL for the denoising-step schedule row (operator
+# request). The 08-16 block above ran the in-dist control for the campaign's
+# sharp-softmax winner; the 08-16/17 language rows then produced a BETTER one on
+# the entmax branch — late [0,0,1,1] at lambda=2 on all-x-text, +2.86pp vs
+# vanilla (z=3.64, Bonf*), with inc [0,0.5,1,1.5] at +2.80 (z=3.37). The
+# grounding-specificity claim predicts both do nothing where nothing is OOD.
+# Three arms, because this axis has no entmax lambda=2 rung at all: allxtext20 is
+# the flat parent ([2,2,2,2]) the two shapes are read against, and it doubles as
+# the entmax-vs-softmax branch swap in-dist (its softmax twin allxt-temp20l20 is
+# already collected here at -1.25pp vs vanilla, n.s.). The iso-dose flat controls
+# the perturbation axes use (allxtext at lambda=1, allxtext15) are deliberately
+# NOT run: in-dist the question is "does the winning arm do anything at all",
+# which is the vs-vanilla contrast, not the when-vs-how-much decomposition.
+# POWER: at ORIG_EPISODES=100 (n=400) the paired SE is ~1.3pp — measured, not
+# assumed: the existing allxt-temp20l20-vs-vanilla pair discordant 11:16 gives
+# sqrt(27)/400 = 1.30pp — so a language-sized +2.86pp would land at z~2.2 and a
+# null here bounds the in-dist effect only to about +/-2.5pp. ORIG_EPISODES=500
+# (n=2,000, init 0-49) takes that to ~0.6pp; the episode count is not in the arm
+# signature, so running at 100 now and extending later RESUMES rather than
+# re-runs (see the ORIG_EPISODES note at the head of this file), and vanilla
+# must be extended with them.
+run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text
+run allxt-late-l2 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
 
 echo "[orig] ALL DONE $(date +%H:%M:%S)"

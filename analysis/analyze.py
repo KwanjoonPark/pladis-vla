@@ -182,7 +182,8 @@ AXES = {
                               "actionxtext15", "actionxtext20",
                               "allxtext", "allxtext15", "allxtext20",
                               "stateximage15", "stateximage20",
-                              "axt-sxi15", "axt-sxi20"]},
+                              "axt-sxi15", "axt-sxi20",
+                              "allxt-late-l2", "allxt-inc-l2"]},
                "extra_contrasts": {"n17": [
                    ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                    ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
@@ -195,6 +196,20 @@ AXES = {
                    ("axt-sxi15", "stateximage15"),
                    ("axt-sxi20", "vanilla"), ("axt-sxi20", "axt-sxi15"),
                    ("axt-sxi20", "actionxtext20"),
+                   # 08-18 denoising-step schedule (the language axis's 08-16/17 row
+                   # carried here): late [0,0,1,1] and inc [0,0.5,1,1.5] on the same
+                   # lambda=2 all-x-text base. Three readings per arm — vs vanilla; vs
+                   # the flat parent allxtext20 ([2,2,2,2], same peak lambda, twice the
+                   # total dose); and vs the COLLECTED FLAT ARM AT THE SAME
+                   # time-integrated dose sum_i lambda_i (late [0,0,2,2] = 4 = flat
+                   # lambda=1 = allxtext; inc [0,1,2,3] = 6 = flat lambda=1.5 =
+                   # allxtext15) — the contrast that separates WHEN the intervention
+                   # acts from HOW MUCH of it there is. late-vs-inc is the within-row
+                   # dose step (both late-weighted).
+                   ("allxt-late-l2", "vanilla"), ("allxt-inc-l2", "vanilla"),
+                   ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
+                   ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
+                   ("allxt-inc-l2", "allxt-late-l2"),
                ]}},
     "language": {"tag": "lang", "cat": None, "cats": [],
                  # extra arms are skipped until all four suite eplogs exist.
@@ -323,6 +338,23 @@ AXES = {
                      ("allxt-temp20-late-l2", "allxt-late-l2"),
                      ("allxt-temp20-inc-l2", "allxt-inc-l2"),
                      ("allxt-temp20-dec-l2", "allxt-dec-l2"),
+                     # 08-18 ISO-DOSE reading of the two rows above — no new arms,
+                     # a contrast the collected data already supports. The
+                     # time-integrated dose sum_i lambda_i (lambda_i = 2*w_i over
+                     # the N=4 Euler steps) makes each shape equal to a FLAT arm
+                     # already on this axis: early [2,2,0,0] and late [0,0,2,2] both
+                     # sum to 4 = flat lambda=1 (allxtext), and inc [0,1,2,3] /
+                     # dec [3,2,1,0] both sum to 6 = flat lambda=1.5 (allxtext15).
+                     # early-vs-late holds dose fixed and moves it in time;
+                     # shape-vs-flat holds dose fixed and CONCENTRATES it, so the
+                     # two together separate "when" from "spread out or not".
+                     # Same reading on the softmax branch against its own flats.
+                     ("allxt-late-l2", "allxtext"), ("allxt-early-l2", "allxtext"),
+                     ("allxt-inc-l2", "allxtext15"), ("allxt-dec-l2", "allxtext15"),
+                     ("allxt-temp20-late-l2", "allxt-temp20"),
+                     ("allxt-temp20-early-l2", "allxt-temp20"),
+                     ("allxt-temp20-inc-l2", "allxt-temp20l15"),
+                     ("allxt-temp20-dec-l2", "allxt-temp20l15"),
                  ],
                  "smolvla": [
                      ("axt10", "axi10"),               # locus contrast at 1.0
@@ -383,7 +415,8 @@ AXES = {
                              "actionxtext15", "actionxtext20",
                              "allxtext", "allxtext15", "allxtext20",
                              "allxt-temp20", "allxt-temp20l15",
-                             "allxt-temp20l20"]},
+                             "allxt-temp20l20",
+                             "allxt-late-l2", "allxt-inc-l2"]},
               "extra_contrasts": {"n17": [
                   # dose ladder at each locus: vs vanilla and vs the rung below
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
@@ -402,6 +435,20 @@ AXES = {
                   ("allxt-temp20l15", "allxt-temp20"),
                   ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxtext20"),
                   ("allxt-temp20l20", "allxt-temp20l15"),
+                  # 08-18 denoising-step schedule (the language axis's 08-16/17 row
+                  # carried here): late [0,0,1,1] and inc [0,0.5,1,1.5] on the same
+                  # lambda=2 all-x-text base. Three readings per arm — vs vanilla; vs
+                  # the flat parent allxtext20 ([2,2,2,2], same peak lambda, twice the
+                  # total dose); and vs the COLLECTED FLAT ARM AT THE SAME
+                  # time-integrated dose sum_i lambda_i (late [0,0,2,2] = 4 = flat
+                  # lambda=1 = allxtext; inc [0,1,2,3] = 6 = flat lambda=1.5 =
+                  # allxtext15) — the contrast that separates WHEN the intervention
+                  # acts from HOW MUCH of it there is. late-vs-inc is the within-row
+                  # dose step (both late-weighted).
+                  ("allxt-late-l2", "vanilla"), ("allxt-inc-l2", "vanilla"),
+                  ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
+                  ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
+                  ("allxt-inc-l2", "allxt-late-l2"),
               ]}},
     # camera: agentview re-posing (runtime `_view_` tail). The per-family
     # breakdown is the point of the axis — orbit/orbit_up move the viewpoint,
@@ -443,7 +490,8 @@ AXES = {
                               "actionxtext15", "actionxtext20",
                               "allxtext", "allxtext15", "allxtext20",
                               "allxt-temp20", "allxt-temp20l15",
-                              "allxt-temp20l20"]},
+                              "allxt-temp20l20",
+                              "allxt-late-l2", "allxt-inc-l2"]},
                "extra_contrasts": {"n17": [
                    # dose ladder at each locus: vs vanilla and vs the rung below
                    ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
@@ -462,6 +510,20 @@ AXES = {
                    ("allxt-temp20l15", "allxt-temp20"),
                    ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxtext20"),
                    ("allxt-temp20l20", "allxt-temp20l15"),
+                   # 08-18 denoising-step schedule (the language axis's 08-16/17 row
+                   # carried here): late [0,0,1,1] and inc [0,0.5,1,1.5] on the same
+                   # lambda=2 all-x-text base. Three readings per arm — vs vanilla; vs
+                   # the flat parent allxtext20 ([2,2,2,2], same peak lambda, twice the
+                   # total dose); and vs the COLLECTED FLAT ARM AT THE SAME
+                   # time-integrated dose sum_i lambda_i (late [0,0,2,2] = 4 = flat
+                   # lambda=1 = allxtext; inc [0,1,2,3] = 6 = flat lambda=1.5 =
+                   # allxtext15) — the contrast that separates WHEN the intervention
+                   # acts from HOW MUCH of it there is. late-vs-inc is the within-row
+                   # dose step (both late-weighted).
+                   ("allxt-late-l2", "vanilla"), ("allxt-inc-l2", "vanilla"),
+                   ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
+                   ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
+                   ("allxt-inc-l2", "allxt-late-l2"),
                ]}},
     "robot": {"tag": "robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
@@ -479,7 +541,8 @@ AXES = {
                              "actionxtext25", "actionxtext30",
                              "allxtext25", "allxtext30",
                              "allxt-temp20", "allxt-temp20l15",
-                             "allxt-temp20l20", "allxt-temp20l25"]},
+                             "allxt-temp20l20", "allxt-temp20l25",
+                             "allxt-late-l2", "allxt-inc-l2"]},
               "extra_contrasts": {"n17": [
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
@@ -497,6 +560,20 @@ AXES = {
                   ("allxt-temp20l20", "allxt-temp20l15"),
                   ("allxt-temp20l25", "vanilla"), ("allxt-temp20l25", "allxtext25"),
                   ("allxt-temp20l25", "allxt-temp20l20"),
+                  # 08-18 denoising-step schedule (the language axis's 08-16/17 row
+                  # carried here): late [0,0,1,1] and inc [0,0.5,1,1.5] on the same
+                  # lambda=2 all-x-text base. Three readings per arm — vs vanilla; vs
+                  # the flat parent allxtext20 ([2,2,2,2], same peak lambda, twice the
+                  # total dose); and vs the COLLECTED FLAT ARM AT THE SAME
+                  # time-integrated dose sum_i lambda_i (late [0,0,2,2] = 4 = flat
+                  # lambda=1 = allxtext; inc [0,1,2,3] = 6 = flat lambda=1.5 =
+                  # allxtext15) — the contrast that separates WHEN the intervention
+                  # acts from HOW MUCH of it there is. late-vs-inc is the within-row
+                  # dose step (both late-weighted).
+                  ("allxt-late-l2", "vanilla"), ("allxt-inc-l2", "vanilla"),
+                  ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
+                  ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
+                  ("allxt-inc-l2", "allxt-late-l2"),
               ]}},
     # original: axis=none — original instructions, original scenes, nothing
     # perturbed. This is the campaign's IN-DISTRIBUTION control, and the reason
@@ -521,7 +598,8 @@ AXES = {
                                 "base0", "actionximage", "statextext",
                                 "stateximage", "allxall",
                                 "allxt-temp20", "allxt-temp20l15",
-                                "allxt-temp20l20"]},
+                                "allxt-temp20l20",
+                                "allxtext20", "allxt-late-l2", "allxt-inc-l2"]},
                  "extra_contrasts": {"n17": [
                      # the 07-16 lambda=1 modality grid, each vs vanilla, plus
                      # the locus contrast that carries the story on language
@@ -533,6 +611,19 @@ AXES = {
                      ("allxt-temp20", "vanilla"),
                      ("allxt-temp20l15", "vanilla"), ("allxt-temp20l15", "allxt-temp20"),
                      ("allxt-temp20l20", "vanilla"), ("allxt-temp20l20", "allxt-temp20l15"),
+                     # 08-18 in-dist control for the entmax step-schedule row. The
+                     # arms that carry the language axis's Bonferroni-surviving
+                     # positives (late +2.86pp z=3.64, inc +2.80 z=3.37) are run
+                     # where nothing is OOD; grounding-specificity predicts both
+                     # go flat. allxtext20 is their flat parent AND this axis's
+                     # first entmax lambda=2 rung, so it also gives the in-dist
+                     # entmax-vs-softmax branch swap against allxt-temp20l20.
+                     # No iso-dose flat controls here (allxtext/allxtext15 are not
+                     # run in-dist): the question is "does it do anything at all",
+                     # which is the vs-vanilla contrast.
+                     ("allxtext20", "vanilla"), ("allxtext20", "allxt-temp20l20"),
+                     ("allxt-late-l2", "vanilla"), ("allxt-inc-l2", "vanilla"),
+                     ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
                  ]}},
 }
 

@@ -528,7 +528,7 @@ arms and executes only what is new. Outputs follow
 and, when enabled, `videos/n17_{axis}_{arm}_{suite}/ep#####_{S|F}_{task}.mp4`).
 
 The `noise` driver additionally accepts **arm names as arguments**, which filter
-its arm list (an unknown name aborts; no argument runs all seven). That axis is
+its arm list (an unknown name aborts; no argument runs all nine). That axis is
 CPU-bound rather than GPU-bound — its per-frame corruption costs 448 ms in the
 motion family against a 40 ms/step base, so 21 % of the episodes carry 77 % of
 the wall time and one arm projects to 25–52 h depending on mean episode length
@@ -538,7 +538,12 @@ halve the wall clock:
 ```bash
 nohup bash experiments/sweep_n17_noise.sh vanilla actionxtext actionxtext15 actionxtext20 > results/sweep/driver_noise.out   2>&1 &
 nohup bash experiments/sweep_n17_noise.sh allxtext allxtext15 allxtext20                  > results/sweep/driver_noise_b.out 2>&1 &
+nohup bash experiments/sweep_n17_noise.sh allxt-late-l2                                   > results/sweep/driver_noise_late.out 2>&1 &
+nohup bash experiments/sweep_n17_noise.sh allxt-inc-l2                                    > results/sweep/driver_noise_inc.out  2>&1 &
 ```
+
+(the last two are the 08-18 step-schedule arms; run them as their own pair once
+the six above are collected — two concurrent processes is still the ceiling.)
 
 Two concurrent eval processes is the ceiling on a 31 GB box (~10.3 GB RSS each).
 Interleaving cannot break pairing — every RNG source is pinned per episode, not
