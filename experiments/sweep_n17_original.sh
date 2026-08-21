@@ -60,7 +60,7 @@ wait_ckpt() {
 # rather than a driver that quietly runs nothing.
 ARMS="vanilla base0 actionximage actionxtext statextext stateximage allxall \
 allxt-temp20l20 allxt-temp20l15 allxt-temp20 \
-allxtext20 allxt-late-l2 allxt-inc-l2"
+allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -131,5 +131,31 @@ run allxt-temp20    --pladis-install --pladis-scale 1.0 --pladis-method softmax 
 run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text
 run allxt-late-l2 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
 run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
+
+# 2026-08-21 sharp-softmax mirror of the LATE schedule arm (operator request).
+# The 08-16/17 language rows put the benefit in the LATE denoising steps on BOTH
+# sparse branches: entmax late [0,0,1,1] at lambda=2 all-x-text +2.86pp vs vanilla
+# (z=3.64, Bonf*) and its softmax(2*l) twin +1.69 (z=2.17), the two statistically
+# indistinguishable from each other (temp-late - late -1.17pp, z=-1.59) — so ON
+# LANGUAGE the time structure belongs to the sharpening, not to entmax's exact
+# zeros. The 08-18 row then carried the ENTMAX late arm to every other axis.
+# IN-DISTRIBUTION CONTROL. Here late read -1.25pp vs vanilla (z=-0.85, n.s.) and
+# inc -3.50 (z=-2.21, nominal): the language gain vanished where nothing is OOD,
+# which is what the grounding-specificity claim predicts. This arm completes the
+# 2x2 (branch x shape) in-dist — allxtext20 / allxt-temp20l20 are the flat pair,
+# allxt-late-l2 / this are the late pair — so the entmax-vs-softmax swap is read
+# in-dist at the same shape as on the perturbation axes.
+# POWER: at n=400 the paired SE is ~1.3pp, so this bounds an in-dist effect to
+# about +/-2.5pp; it cannot resolve a language-sized +2.9 as significant on its own.
+# This arm is the branch swap of that one here: same all-x-text locus, same
+# lambda=2 base, same [0,0,1,1] weights, sparse branch entmax-1.5 -> softmax(2*l)
+# at beta=2 (the ent15-strength-matched setting of supp G.1; beta=1 would collapse
+# the sparse branch onto the dense one and void every "did blend" assertion).
+# Effective lambda per step = 2 * w = [0,0,2,2].
+# Read three ways: vs vanilla (does the winning composition do anything in-dist),
+# vs its flat parent allxt-temp20l20, and vs allxt-late-l2 (the branch swap at
+# matched shape). The iso-dose flat control allxt-temp20 is collected here too, so
+# that reading comes for free.
+run allxt-temp20-late-l2 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
 
 echo "[orig] ALL DONE $(date +%H:%M:%S)"

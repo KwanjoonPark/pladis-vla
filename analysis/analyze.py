@@ -183,7 +183,8 @@ AXES = {
                               "allxtext", "allxtext15", "allxtext20",
                               "stateximage15", "stateximage20",
                               "axt-sxi15", "axt-sxi20",
-                              "allxt-late-l2", "allxt-inc-l2"]},
+                              "allxt-late-l2", "allxt-inc-l2",
+                              "allxt-temp20-late-l2"]},
                "extra_contrasts": {"n17": [
                    ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                    ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
@@ -210,6 +211,17 @@ AXES = {
                    ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
                    ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
                    ("allxt-inc-l2", "allxt-late-l2"),
+                   # 2026-08-21 sharp-softmax mirror of the LATE shape (the 08-16/17 language row's
+                   # branch swap, carried here). Same all-x-text locus, same lambda=2, same
+                   # [0,0,1,1] weights, entmax-1.5 -> softmax(2*l) at beta=2. On language the two
+                   # branches agreed at this shape (temp-late - late -1.17pp, z=-1.59, n.s.), so the
+                   # time structure there is a property of the sharpening rather than of entmax's
+                   # exact zeros; this asks the same question off the language axis.
+                   ("allxt-temp20-late-l2", "vanilla"),
+                   ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
+                   # only two readings on this axis: layout carries no sharp-softmax arm
+                   # (allxt-temp20{,l15,l20} were never run here), so the flat-parent and
+                   # iso-dose contrasts the other axes get have no counterpart to pair with.
                ]}},
     "language": {"tag": "lang", "cat": None, "cats": [],
                  # extra arms are skipped until all four suite eplogs exist.
@@ -416,7 +428,8 @@ AXES = {
                              "allxtext", "allxtext15", "allxtext20",
                              "allxt-temp20", "allxt-temp20l15",
                              "allxt-temp20l20",
-                             "allxt-late-l2", "allxt-inc-l2"]},
+                             "allxt-late-l2", "allxt-inc-l2",
+                             "allxt-temp20-late-l2"]},
               "extra_contrasts": {"n17": [
                   # dose ladder at each locus: vs vanilla and vs the rung below
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
@@ -449,6 +462,16 @@ AXES = {
                   ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
                   ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
                   ("allxt-inc-l2", "allxt-late-l2"),
+                  # 2026-08-21 sharp-softmax mirror of the LATE shape (the 08-16/17 language row's
+                  # branch swap, carried here). Same all-x-text locus, same lambda=2, same
+                  # [0,0,1,1] weights, entmax-1.5 -> softmax(2*l) at beta=2. On language the two
+                  # branches agreed at this shape (temp-late - late -1.17pp, z=-1.59, n.s.), so the
+                  # time structure there is a property of the sharpening rather than of entmax's
+                  # exact zeros; this asks the same question off the language axis.
+                  ("allxt-temp20-late-l2", "vanilla"),
+                  ("allxt-temp20-late-l2", "allxt-temp20l20"),   # flat parent [2,2,2,2]
+                  ("allxt-temp20-late-l2", "allxt-temp20"),      # iso-dose flat (sum lambda = 4)
+                  ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
               ]}},
     # camera: agentview re-posing (runtime `_view_` tail). The per-family
     # breakdown is the point of the axis — orbit/orbit_up move the viewpoint,
@@ -491,7 +514,8 @@ AXES = {
                               "allxtext", "allxtext15", "allxtext20",
                               "allxt-temp20", "allxt-temp20l15",
                               "allxt-temp20l20",
-                              "allxt-late-l2", "allxt-inc-l2"]},
+                              "allxt-late-l2", "allxt-inc-l2",
+                              "allxt-temp20-late-l2"]},
                "extra_contrasts": {"n17": [
                    # dose ladder at each locus: vs vanilla and vs the rung below
                    ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
@@ -524,6 +548,16 @@ AXES = {
                    ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
                    ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
                    ("allxt-inc-l2", "allxt-late-l2"),
+                   # 2026-08-21 sharp-softmax mirror of the LATE shape (the 08-16/17 language row's
+                   # branch swap, carried here). Same all-x-text locus, same lambda=2, same
+                   # [0,0,1,1] weights, entmax-1.5 -> softmax(2*l) at beta=2. On language the two
+                   # branches agreed at this shape (temp-late - late -1.17pp, z=-1.59, n.s.), so the
+                   # time structure there is a property of the sharpening rather than of entmax's
+                   # exact zeros; this asks the same question off the language axis.
+                   ("allxt-temp20-late-l2", "vanilla"),
+                   ("allxt-temp20-late-l2", "allxt-temp20l20"),   # flat parent [2,2,2,2]
+                   ("allxt-temp20-late-l2", "allxt-temp20"),      # iso-dose flat (sum lambda = 4)
+                   ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
                ]}},
     "robot": {"tag": "robot", "cat": robot_level,
               "cats": ["L1", "L2", "L3", "L4", "L5"],
@@ -542,7 +576,8 @@ AXES = {
                              "allxtext25", "allxtext30",
                              "allxt-temp20", "allxt-temp20l15",
                              "allxt-temp20l20", "allxt-temp20l25",
-                             "allxt-late-l2", "allxt-inc-l2"]},
+                             "allxt-late-l2", "allxt-inc-l2",
+                             "allxt-temp20-late-l2"]},
               "extra_contrasts": {"n17": [
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
@@ -574,6 +609,16 @@ AXES = {
                   ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
                   ("allxt-late-l2", "allxtext"), ("allxt-inc-l2", "allxtext15"),
                   ("allxt-inc-l2", "allxt-late-l2"),
+                  # 2026-08-21 sharp-softmax mirror of the LATE shape (the 08-16/17 language row's
+                  # branch swap, carried here). Same all-x-text locus, same lambda=2, same
+                  # [0,0,1,1] weights, entmax-1.5 -> softmax(2*l) at beta=2. On language the two
+                  # branches agreed at this shape (temp-late - late -1.17pp, z=-1.59, n.s.), so the
+                  # time structure there is a property of the sharpening rather than of entmax's
+                  # exact zeros; this asks the same question off the language axis.
+                  ("allxt-temp20-late-l2", "vanilla"),
+                  ("allxt-temp20-late-l2", "allxt-temp20l20"),   # flat parent [2,2,2,2]
+                  ("allxt-temp20-late-l2", "allxt-temp20"),      # iso-dose flat (sum lambda = 4)
+                  ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
               ]}},
     # original: axis=none — original instructions, original scenes, nothing
     # perturbed. This is the campaign's IN-DISTRIBUTION control, and the reason
@@ -599,7 +644,8 @@ AXES = {
                                 "stateximage", "allxall",
                                 "allxt-temp20", "allxt-temp20l15",
                                 "allxt-temp20l20",
-                                "allxtext20", "allxt-late-l2", "allxt-inc-l2"]},
+                                "allxtext20", "allxt-late-l2", "allxt-inc-l2",
+                                "allxt-temp20-late-l2"]},
                  "extra_contrasts": {"n17": [
                      # the 07-16 lambda=1 modality grid, each vs vanilla, plus
                      # the locus contrast that carries the story on language
@@ -624,6 +670,15 @@ AXES = {
                      ("allxtext20", "vanilla"), ("allxtext20", "allxt-temp20l20"),
                      ("allxt-late-l2", "vanilla"), ("allxt-inc-l2", "vanilla"),
                      ("allxt-late-l2", "allxtext20"), ("allxt-inc-l2", "allxtext20"),
+                     # 2026-08-21 sharp-softmax mirror of the LATE shape (the 08-16/17 language row's
+                     # branch swap, carried here). Same all-x-text locus, same lambda=2, same
+                     # [0,0,1,1] weights, entmax-1.5 -> softmax(2*l) at beta=2. On language the two
+                     # branches agreed at this shape (temp-late - late -1.17pp, z=-1.59, n.s.), so the
+                     # time structure there is a property of the sharpening rather than of entmax's
+                     # exact zeros; this asks the same question off the language axis.
+                     ("allxt-temp20-late-l2", "vanilla"),
+                     ("allxt-temp20-late-l2", "allxt-temp20l20"),   # flat parent, in-dist
+                     ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
                  ]}},
 }
 

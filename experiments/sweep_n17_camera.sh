@@ -85,4 +85,31 @@ run allxtext20    --pladis-install --pladis-scale 2.0 --pladis-qgroup all    --p
 run allxt-late-l2 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
 run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
 
+# 2026-08-21 sharp-softmax mirror of the LATE schedule arm (operator request).
+# The 08-16/17 language rows put the benefit in the LATE denoising steps on BOTH
+# sparse branches: entmax late [0,0,1,1] at lambda=2 all-x-text +2.86pp vs vanilla
+# (z=3.64, Bonf*) and its softmax(2*l) twin +1.69 (z=2.17), the two statistically
+# indistinguishable from each other (temp-late - late -1.17pp, z=-1.59) — so ON
+# LANGUAGE the time structure belongs to the sharpening, not to entmax's exact
+# zeros. The 08-18 row then carried the ENTMAX late arm to every other axis.
+# On THIS axis the row moved, and it moved DOWN: late -2.81pp vs vanilla (z=-2.82,
+# nominal) and inc -3.94 (z=-3.83, Bonf* HARMFUL), while the flat softmax parent
+# allxt-temp20l20 was -1.31 (n.s.). Camera is therefore the one place off language
+# where the swap is asked of a SIGNAL rather than of a null — is the late-step HARM
+# entmax-specific, or does sharpening late hurt on this axis either way?
+# This arm is the branch swap of that one here: same all-x-text locus, same
+# lambda=2 base, same [0,0,1,1] weights, sparse branch entmax-1.5 -> softmax(2*l)
+# at beta=2 (the ent15-strength-matched setting of supp G.1; beta=1 would collapse
+# the sparse branch onto the dense one and void every "did blend" assertion).
+# Effective lambda per step = 2 * w = [0,0,2,2].
+# Read four ways: vs vanilla; vs its flat parent allxt-temp20l20 ([2,2,2,2], same
+# peak lambda, twice the total dose, collected); vs the iso-dose flat arm
+# allxt-temp20 (sum_i lambda_i = 4 for both, collected) — WHEN vs HOW MUCH; and vs
+# allxt-late-l2, the SAME shape on the entmax branch — the zeros-not-special
+# question on the TIME axis, asked off the language axis for the first time.
+# One arm, not the four-shape row: the flat [1,1,1,1] mirror is bit-identical to
+# allxt-temp20l20 (verify_step_schedule.py gate F) and the iso-dose control is
+# already collected, so only the shape itself is missing.
+run allxt-temp20-late-l2 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+
 echo "[camera] ALL DONE $(date +%H:%M:%S)"

@@ -92,4 +92,27 @@ run axt-sxi20     --pladis-install --pladis-scale 2.0 --pladis-cells actionxtext
 run allxt-late-l2 --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
 run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0.5,1,1.5
 
+# 2026-08-21 sharp-softmax mirror of the LATE schedule arm (operator request).
+# The 08-16/17 language rows put the benefit in the LATE denoising steps on BOTH
+# sparse branches: entmax late [0,0,1,1] at lambda=2 all-x-text +2.86pp vs vanilla
+# (z=3.64, Bonf*) and its softmax(2*l) twin +1.69 (z=2.17), the two statistically
+# indistinguishable from each other (temp-late - late -1.17pp, z=-1.59) — so ON
+# LANGUAGE the time structure belongs to the sharpening, not to entmax's exact
+# zeros. The 08-18 row then carried the ENTMAX late arm to every other axis.
+# On THIS axis it did not carry: late read -1.11pp vs vanilla (z=-1.26, n.s.)
+# and its inc sibling -3.67pp (z=-3.88, Bonf* HARMFUL), against a flat parent
+# allxtext20 that was itself -1.70 (n.s.).
+# This arm is the branch swap of that one here: same all-x-text locus, same
+# lambda=2 base, same [0,0,1,1] weights, sparse branch entmax-1.5 -> softmax(2*l)
+# at beta=2 (the ent15-strength-matched setting of supp G.1; beta=1 would collapse
+# the sparse branch onto the dense one and void every "did blend" assertion).
+# Effective lambda per step = 2 * w = [0,0,2,2].
+# Read TWO ways here, not four: this axis carries NO sharp-softmax arm at all
+# (allxt-temp20{,l15,l20} were never run on layout), so only vs vanilla and the
+# branch swap vs allxt-late-l2 (same shape, entmax) resolve. The flat-parent and
+# iso-dose readings the other axes get would need allxt-temp20l20 and
+# allxt-temp20 collected here first (~12 h more); analyze.py carries only the two
+# contrasts that exist rather than pretending to the other two.
+run allxt-temp20-late-l2 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+
 echo "[layout] ALL DONE $(date +%H:%M:%S)"
