@@ -528,7 +528,7 @@ arms and executes only what is new. Outputs follow
 and, when enabled, `videos/n17_{axis}_{arm}_{suite}/ep#####_{S|F}_{task}.mp4`).
 
 The `noise` driver additionally accepts **arm names as arguments**, which filter
-its arm list (an unknown name aborts; no argument runs all ten). That axis is
+its arm list (an unknown name aborts; no argument runs all eleven). That axis is
 CPU-bound rather than GPU-bound — its per-frame corruption costs 448 ms in the
 motion family against a 40 ms/step base, so 21 % of the episodes carry 77 % of
 the wall time and one arm projects to 25–52 h depending on mean episode length
@@ -541,11 +541,12 @@ nohup bash experiments/sweep_n17_noise.sh allxtext allxtext15 allxtext20        
 nohup bash experiments/sweep_n17_noise.sh allxt-late-l2                                   > results/sweep/driver_noise_late.out 2>&1 &
 nohup bash experiments/sweep_n17_noise.sh allxt-inc-l2                                    > results/sweep/driver_noise_inc.out  2>&1 &
 nohup bash experiments/sweep_n17_noise.sh allxt-temp20-late-l2                            > results/sweep/driver_noise_late_temp.out 2>&1 &
+nohup bash experiments/sweep_n17_noise.sh allxt-temp20-late-l15                           > results/sweep/driver_noise_late_temp_l15.out 2>&1 &
 ```
 
-(the 08-18 step-schedule pair and the 08-21 sharp-softmax mirror of its `late`
-arm are one-arm drivers; run them after the six above are collected — two
-concurrent processes is still the ceiling.)
+(the 08-18 step-schedule pair, the 08-21 sharp-softmax mirror of its `late` arm
+and that mirror's λ=1.5 rung are one-arm drivers; run them after the six above
+are collected — two concurrent processes is still the ceiling.)
 
 Two concurrent eval processes is the ceiling on a 31 GB box (~10.3 GB RSS each).
 Interleaving cannot break pairing — every RNG source is pinned per episode, not

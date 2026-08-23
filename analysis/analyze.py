@@ -429,7 +429,7 @@ AXES = {
                              "allxt-temp20", "allxt-temp20l15",
                              "allxt-temp20l20",
                              "allxt-late-l2", "allxt-inc-l2",
-                             "allxt-temp20-late-l2"]},
+                             "allxt-temp20-late-l2", "allxt-temp20-late-l15"]},
               "extra_contrasts": {"n17": [
                   # dose ladder at each locus: vs vanilla and vs the rung below
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
@@ -472,6 +472,16 @@ AXES = {
                   ("allxt-temp20-late-l2", "allxt-temp20l20"),   # flat parent [2,2,2,2]
                   ("allxt-temp20-late-l2", "allxt-temp20"),      # iso-dose flat (sum lambda = 4)
                   ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
+                  # 2026-08-21 dose rung under the late shape, softmax branch: same
+                  # [0,0,1,1] weights and beta=2 at a lambda=1.5 base ([0,0,1.5,1.5]).
+                  # Three readings only — no iso-dose flat control exists (sum lambda
+                  # = 3 would need a flat lambda=0.75 arm, which no axis carries) and
+                  # no entmax twin at this dose (the entmax schedule row is lambda=2
+                  # only), so the dose step against the lambda=2 rung is what this arm
+                  # is for: does the late shape survive one rung down?
+                  ("allxt-temp20-late-l15", "vanilla"),
+                  ("allxt-temp20-late-l15", "allxt-temp20l15"),      # flat parent [1.5]*4
+                  ("allxt-temp20-late-l15", "allxt-temp20-late-l2"), # dose step, same shape+branch
               ]}},
     # camera: agentview re-posing (runtime `_view_` tail). The per-family
     # breakdown is the point of the axis — orbit/orbit_up move the viewpoint,

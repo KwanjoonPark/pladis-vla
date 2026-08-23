@@ -70,7 +70,7 @@ SUITES="libero_10 libero_goal libero_object libero_spatial"
 # this list — it can never introduce an arm — so an unknown name is an abort
 # rather than a driver that quietly runs nothing for four days.
 ARMS="vanilla actionxtext actionxtext15 actionxtext20 allxtext allxtext15 allxtext20 \
-allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2"
+allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 allxt-temp20-late-l15"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -165,5 +165,27 @@ run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --plad
 # GPU, sets the rate), so it is a one-arm driver of its own:
 #   nohup bash experiments/sweep_n17_noise.sh allxt-temp20-late-l2 > results/sweep/driver_noise_late_temp.out 2>&1 &
 run allxt-temp20-late-l2 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+
+# 2026-08-21 dose rung UNDER the late shape (operator request), softmax branch:
+# the same [0,0,1,1] weights and the same beta=2 at a lambda=1.5 base instead of 2
+# (lambda_i = [0,0,1.5,1.5], sum 3). The 08-16/17 language row measured the shape at
+# ONE dose only, so "does the late shape need lambda=2, or does it survive the rung
+# below" is untested everywhere; this asks it here.
+# Read THREE ways, and it is worth being explicit about which two do NOT exist:
+#   vs vanilla;
+#   vs its flat parent allxt-temp20l15 ([1.5,1.5,1.5,1.5], sum 6 — same peak lambda,
+#     twice the total dose), collected on this axis;
+#   vs allxt-temp20-late-l2, the SAME shape and branch one dose rung up — the
+#     within-row dose step, which is the contrast this arm is FOR.
+#   NOT available: the iso-dose flat control (sum lambda = 3 would need a flat
+#     lambda=0.75 arm, a rung no axis of the campaign carries) and the entmax branch
+#     swap (allxt-late-l15 was never run — the entmax schedule row is lambda=2 only).
+#   So a null here is readable as "the shape does not survive the dose cut", but the
+#   when-vs-how-much decomposition the lambda=2 rung gets is not reproduced at 1.5.
+# COST: another ~15-20 h at 1,601 eps, and this axis reads at ceiling on the text
+# locus (every arm flat vs vanilla), so budget it as a dose-ladder completion rather
+# than as a place a signal is expected. Its own one-arm driver:
+#   nohup bash experiments/sweep_n17_noise.sh allxt-temp20-late-l15 > results/sweep/driver_noise_late_temp_l15.out 2>&1 &
+run allxt-temp20-late-l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
 
 echo "[noise] ALL DONE $(date +%H:%M:%S)"

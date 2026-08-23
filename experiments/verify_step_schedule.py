@@ -258,8 +258,10 @@ def gate_F():
     # false negative, which is exactly the silent failure this gate exists for.
     for method, beta in (("ent15max", 1.0), ("softmax", 2.0)):
         # scale 1 = the shape row as written; scale 2 = the lambda base the 08-16
-        # language campaign runs (allxt-*-l2), where inc/dec peak at lambda=3
-        for scale in (1.0, 2.0):
+        # language campaign runs (allxt-*-l2), where inc/dec peak at lambda=3;
+        # scale 1.5 = the 08-21 noise rung allxt-temp20-late-l15, whose weights are
+        # the only ones in the campaign that make lambda_i non-integral ([0,0,1.5,1.5])
+        for scale in (1.0, 1.5, 2.0):
             # the unscheduled arm at this scale: what "all" must reproduce bit-for-bit
             flat = _fresh_model(seed=1)
             install_pladis(flat, pladis_scale=scale, kind="text", method=method, beta=beta)
