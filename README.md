@@ -575,6 +575,7 @@ therefore stay fixed across every arm of a campaign; each run appends
 
 ```bash
 python3 analysis/analyze.py --language
+python3 analysis/analyze.py --original  # in-distribution control (no perturbation)
 python3 analysis/analyze.py --layout    # + perturbation-category breakdown
 python3 analysis/analyze.py --robot     # + strength-level (L1–L5) breakdown
 python3 analysis/analyze.py --noise     # + corruption-family breakdown

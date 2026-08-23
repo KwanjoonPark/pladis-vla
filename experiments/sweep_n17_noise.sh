@@ -30,18 +30,23 @@
 # step-of-mean-episode-length. The uncorrupted base is 40 ms/step, measured at
 # sweep scale on the camera axis (n=1,599 each: vanilla 39.6, actionxtext 41.2,
 # allxtext20 38.0 — the lambda>0 eager path is NOT measurably slower than fused
-# SDPA at this scale, so all seven arms share one cost model). Per arm:
+# SDPA at this scale, so every arm shares one cost model). Per arm:
 #     mean steps   350     450     550     720 (every episode at the cap)
 #     hours       25.3    32.5    39.8    52.1
 # camera's own mean was 334 steps; noise runs lower SR, so budget the middle of
 # that band. The model is validated on the one clean measured point available:
 # motion sev1 at 720 steps -> predicted 133.6 s vs 140.25 s logged
-# (results/noise_try5_eplog.tsv, ep0). Seven arms is therefore ~180-280 h of
-# machine time, not the ~55 h a camera-sized reading of "seven arms" suggests.
+# (results/noise_try5_eplog.tsv, ep0), and it was right about the ORDER: this is
+# ~20x the camera axis per episode, not the ~55 h a camera-sized reading suggests.
+# MEASURED 2026-08-23 over the 13 completed arms (1,601 eps each): 42.8-46.0 s/ep
+# = 19.0-20.5 h per arm, mean 19.9. The projection over-predicted because the mean
+# episode landed near 350 steps, the bottom of the band above. Budget ~20 h/arm:
+# this file's ELEVEN arms are ~220 h, and the three sharp-softmax arms in
+# sweep_n17_noise_temp.sh add ~60 h.
 #
 # CONCURRENCY: the bottleneck here is single-threaded CPU (the corruption call),
 # not the GPU, so two drivers over DISJOINT arms nearly halve the wall clock.
-# Arms are selectable as arguments; with none, this runs all seven in order:
+# Arms are selectable as arguments; with none, this runs all eleven in order:
 #   nohup bash experiments/sweep_n17_noise.sh vanilla actionxtext actionxtext15 actionxtext20 \
 #        > results/sweep/driver_noise.out 2>&1 &
 #   nohup bash experiments/sweep_n17_noise.sh allxtext allxtext15 allxtext20 \

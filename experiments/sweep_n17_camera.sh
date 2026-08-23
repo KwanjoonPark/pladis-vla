@@ -21,8 +21,11 @@
 # delegation, verify_base0_parity.py); with no image arm, the surviving locus
 # contrast is the QUERY-GROUP one (all-x-t vs a-x-t at matched dose), which is
 # what analysis/analyze.py uses as this axis's locus pair.
-# Cost: ~15-20 s/ep projected from the robot axis's success/failure wall-time
-# split, i.e. ~7-9 h per arm and ~46-62 h for the seven arms on one A5000.
+# Cost: MEASURED 2026-08-23 over the 12 completed arms (1,599 eps each):
+# 13.1-14.8 s/ep = 5.8-6.6 h per arm, mean 6.1 h on one A5000. The pre-run
+# projection was ~15-20 s/ep from the robot axis's success/failure wall-time
+# split, so the axis came in at the fast end of it. This file carries TEN arms
+# (~61 h); the three sharp-softmax arms in sweep_n17_camera_temp.sh add ~18 h.
 # Resume-safe at episode granularity.
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
