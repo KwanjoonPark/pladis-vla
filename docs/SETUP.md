@@ -13,7 +13,24 @@ software stack.** Closed-loop rollouts chaotically amplify numeric differences
 between GPUs/kernels, which breaks the episode pairing the analysis depends
 on. The unit of cross-server parallelism is a whole (model × axis) campaign —
 never individual arms of the same comparison. Every eplog records the commit
-that produced it (`<out>.arm` sidecar, `code <git-describe>` lines).
+**and the machine** that produced it (`<out>.arm` sidecar, `code <git-describe>
+host <name>` lines, one per run that actually wrote episodes).
+
+Since 2026-08-26 the rule is enforced rather than remembered:
+
+* extending an eplog on a machine other than the one that wrote its episodes
+  **aborts** before the first row (`PLADIS_ALLOW_HOST_MIX=1` overrides, and says
+  so loudly);
+* a *finished* arm still resumes as a seconds-long no-op on any machine, so
+  re-invoking a driver anywhere stays safe;
+* `analysis/analyze.py` prints a `[HOSTS]` block when an axis carries arms from
+  more than one machine, and marks every affected contrast `!host`;
+* gates: `experiments/verify_eplog_host.py` (CPU, no checkpoint).
+
+So the safe way to use a second machine is to move a whole contrast, not an arm:
+run that axis's controls there too, under the same commit, and compare within the
+machine. `PLADIS_HOST` overrides the recorded name where the hostname is not
+stable (containers, schedulers).
 
 ## 1. Clone and pin
 

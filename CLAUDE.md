@@ -61,6 +61,7 @@ bash experiments/run.sh experiments/verify_noise_axis.py
 bash experiments/run.sh experiments/verify_camera_axis.py            # --mode video
 bash experiments/run.sh experiments/verify_step_schedule.py   # --pladis-steps gate
 bash experiments/run.sh experiments/verify_nag.py             # --pladis-nag-* gate
+bash experiments/run.sh experiments/verify_eplog_host.py      # cross-machine guard
 ```
 
 `experiments/diag_nag.py` is a measurement, not a gate: it runs a few episodes with
@@ -158,6 +159,11 @@ silently, which is why several of them are enforced as hard errors rather than d
   sidecar.
 - **One (model × axis) campaign runs on one machine and one stack.** Cross-machine
   numeric differences break pairing; parallelize at campaign granularity only.
+  Enforced since 2026-08-26: the `.arm` sidecar records `host <name>` per run, an
+  eplog refuses to be extended on a different machine (`PLADIS_ALLOW_HOST_MIX=1`
+  overrides), and `analyze.py` prints a `[HOSTS]` block plus a `!host` marker on
+  any contrast whose two arms came from different machines. A finished arm still
+  resumes as a no-op anywhere, so drivers stay re-invokable.
 
 ## Working conventions
 

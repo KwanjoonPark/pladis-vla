@@ -51,7 +51,7 @@ import time
 import torch
 
 from harness.env import LiberoPlusTaskSet, LiberoPlusSession
-from harness.eplog import EpisodeLogger
+from harness.eplog import EpisodeLogger, host_id
 from harness.registry import MODELS, resolve_hooks, resolve_loader
 from harness.rollout import run_episode
 
@@ -563,7 +563,9 @@ def main():
     )
     print(f"[arm] signature {arm_signature}", flush=True)
     code_version = _git_describe()
-    print(f"[arm] code {code_version}", flush=True)
+    # The machine is part of an arm's identity for pairing purposes (SETUP.md §0),
+    # so it is printed next to the commit and recorded in the .arm sidecar.
+    print(f"[arm] code {code_version} host {host_id()}", flush=True)
 
     ts = LiberoPlusTaskSet(args.suite, axis)
     n_eps = len(ts.task_names) if args.episodes == 0 else args.episodes

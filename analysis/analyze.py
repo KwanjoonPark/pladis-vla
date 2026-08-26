@@ -750,6 +750,35 @@ AXES = {
                  ]}},
 }
 
+def arm_hosts(prefix, arm):
+    """Machines that wrote this arm's suite eplogs, from the `.arm` sidecars.
+
+    SETUP.md §0 allows cross-machine parallelism only at (model x axis) campaign
+    granularity: closed-loop rollouts amplify kernel-level numeric differences, so
+    two arms of one contrast produced on different machines are not validly paired.
+    Nothing downstream could see that before the host was recorded, which is why it
+    is surfaced here instead of left to the operator's memory of what ran where.
+    An empty set = eplogs predating the record (2026-08-26), which cannot be checked.
+
+    The provenance line is parsed inline rather than imported from
+    harness/eplog.py (which owns the format, `code <git-describe> host <name>`):
+    that module reaches EpisodeResult through harness.rollout -> harness.env, and
+    this script must keep running with no venv, no GPU and no simulator stack.
+    """
+    hosts = set()
+    for s in SUITES:
+        sidecar = SWEEP / f"{prefix}_{arm}_{s}_eplog.tsv.arm"
+        if not sidecar.exists():
+            continue
+        with open(sidecar) as f:
+            f.readline()  # line 1 is the arm signature, never a provenance record
+            for line in f:
+                toks = line.split()
+                hosts |= {toks[i + 1] for i, t in enumerate(toks)
+                          if t == "host" and i + 1 < len(toks)}
+    return hosts
+
+
 def load(prefix, arm):
     eps = {}
     for s in SUITES:
@@ -822,6 +851,20 @@ def main():
             print(f"[note] extra arm {a!r}: eplogs missing/incomplete, skipped")
 
     data = {arm: load(prefix, arm) for arm in arms}
+    hosts = {arm: arm_hosts(prefix, arm) for arm in arms}
+    seen_hosts = set().union(*hosts.values()) if hosts else set()
+    if len(seen_hosts) > 1:
+        print(f"\n[HOSTS] this axis carries arms from {len(seen_hosts)} machines "
+              f"{sorted(seen_hosts)}. SETUP.md §0 allows cross-machine work only at "
+              f"whole-campaign granularity, so any contrast marked !host below pairs "
+              f"two machines' numerics and is NOT valid:")
+        for arm in arms:
+            if hosts[arm]:
+                print(f"         {arm:24s} {sorted(hosts[arm])}")
+        unknown = [a for a in arms if not hosts[a]]
+        if unknown:
+            print(f"         (no host recorded, predates 2026-08-26: "
+                  f"{', '.join(unknown)})")
     # Arms must be paired, but they may legitimately differ in LENGTH: env.py's
     # schedule is prefix-determined (schedule(N,seed)[:M] == schedule(M,seed)),
     # so raising --episodes extends an arm rather than reshuffling it, and the
@@ -907,6 +950,10 @@ def main():
         d = sr(a, ks) - sr(b, ks)
         mark = "*" if p < 0.05 / m else (" " if p >= 0.05 else ".")
         n_note = "" if len(ks) == len(keys) else f"  n={len(ks)}"
+        # Two arms from different machines are not paired data, whatever the
+        # p-value says; flag it on the row, not only in the header block.
+        if hosts[a] and hosts[b] and hosts[a] != hosts[b]:
+            n_note += f"  !host {sorted(hosts[a])} vs {sorted(hosts[b])}"
         print(f"  {a:13s} - {b:13s} {d:+6.2f}pp  disc {n01:3d}:{n10:3d}"
               f"  z={z:+5.2f}  p={p:.4g}  p_bonf={min(1.0, p * m):.4g} {mark}{n_note}")
     print("  (* survives Bonferroni; . nominal p<.05 only)")
