@@ -11,7 +11,9 @@ robustness benchmark with paired, episode-level statistics.
 
 `README.md` is the scientific spec (method, arm vocabulary, protocol, statistics).
 `docs/SETUP.md` is the machine-provisioning spec. `docs/benchmark.md` (Korean) holds
-cross-verified LIBERO-plus facts. Read the relevant one before changing behavior that
+cross-verified LIBERO-plus facts. `docs/nag.md` is the design doc for the NAG
+normalization row — its §2 algebra is what decides which NAG arms are worth running
+and which are re-runs of the dose ladder under another name. Read the relevant one before changing behavior that
 either document asserts — the documents are treated as contracts, and several source
 comments cite them by section.
 
@@ -58,7 +60,13 @@ bash experiments/run.sh experiments/verify_robot_axis.py
 bash experiments/run.sh experiments/verify_noise_axis.py
 bash experiments/run.sh experiments/verify_camera_axis.py            # --mode video
 bash experiments/run.sh experiments/verify_step_schedule.py   # --pladis-steps gate
+bash experiments/run.sh experiments/verify_nag.py             # --pladis-nag-* gate
 ```
+
+`experiments/diag_nag.py` is a measurement, not a gate: it runs a few episodes with
+the NAG census armed and reports the L1-ratio distribution that `--pladis-nag-tau`
+has to be chosen from (`docs/nag.md` §6). Choosing tau from the paper instead is
+how a NAG arm ends up bit-identical to its own control.
 
 `verify_camera_axis.py --mode video` writes one mp4 with the unperturbed
 episode and all four viewpoint families side by side under identical scripted

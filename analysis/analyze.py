@@ -271,7 +271,12 @@ AXES = {
                                 #   branch swapped to softmax(2*l). Parent =
                                 #   allxt-temp20l20 (the flat row, bit-identical).
                                 "allxt-temp20-early-l2", "allxt-temp20-late-l2",
-                                "allxt-temp20-inc-l2", "allxt-temp20-dec-l2"]},
+                                "allxt-temp20-inc-l2", "allxt-temp20-dec-l2",
+                                # 08-26 NAG normalization (docs/nag.md): the cap at
+                                #   the shared operating point (lambda=2, tau=2.5,
+                                #   rho=1) on the axis whose ladder CLIMBS — the
+                                #   risk case, where the cap could cost the gain.
+                                "allxt-temp20-nagn-l20"]},
                  "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -367,6 +372,14 @@ AXES = {
                      ("allxt-temp20-early-l2", "allxt-temp20"),
                      ("allxt-temp20-inc-l2", "allxt-temp20l15"),
                      ("allxt-temp20-dec-l2", "allxt-temp20l15"),
+                     # 2026-08-26 NAG cap at the shared setting (lambda=2, tau=2.5,
+                     # rho=1; docs/nag.md §7 Tier 1). This axis's plain ladder CLIMBS
+                     # to lambda=2 (+1.95pp from lambda=1, z=+2.72), so the contrast
+                     # against the uncapped twin is the risk reading: does bounding
+                     # per-query magnitude cost the gain the dose bought? A dose
+                     # confound is impossible — same locus, same lambda, same branch.
+                     ("allxt-temp20-nagn-l20", "allxt-temp20l20"),
+                     ("allxt-temp20-nagn-l20", "vanilla"),
                  ],
                  "smolvla": [
                      ("axt10", "axi10"),               # locus contrast at 1.0
@@ -587,7 +600,12 @@ AXES = {
                              "allxt-temp20", "allxt-temp20l15",
                              "allxt-temp20l20", "allxt-temp20l25",
                              "allxt-late-l2", "allxt-inc-l2",
-                             "allxt-temp20-late-l2"]},
+                             "allxt-temp20-late-l2",
+                             # 08-26 NAG normalization at the shared operating
+                             #   point (docs/nag.md §7 Tier 1). Like language,
+                             #   this axis peaks at lambda=2, so the cap is read
+                             #   where the dose already works.
+                             "allxt-temp20-nagn-l20"]},
               "extra_contrasts": {"n17": [
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
@@ -629,6 +647,12 @@ AXES = {
                   ("allxt-temp20-late-l2", "allxt-temp20l20"),   # flat parent [2,2,2,2]
                   ("allxt-temp20-late-l2", "allxt-temp20"),      # iso-dose flat (sum lambda = 4)
                   ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
+                  # 2026-08-26 NAG cap at the shared setting (lambda=2, tau=2.5,
+                  # rho=1; docs/nag.md §7 Tier 1). vs its uncapped twin isolates the
+                  # cap with no dose confound. This axis's own optimum IS lambda=2,
+                  # so a negative here prices the guardrail where the dose works.
+                  ("allxt-temp20-nagn-l20", "allxt-temp20l20"),
+                  ("allxt-temp20-nagn-l20", "vanilla"),
               ]}},
     # original: axis=none — original instructions, original scenes, nothing
     # perturbed. This is the campaign's IN-DISTRIBUTION control, and the reason
@@ -655,7 +679,12 @@ AXES = {
                                 "allxt-temp20", "allxt-temp20l15",
                                 "allxt-temp20l20",
                                 "allxtext20", "allxt-late-l2", "allxt-inc-l2",
-                                "allxt-temp20-late-l2"]},
+                                "allxt-temp20-late-l2",
+                                # 08-26 NAG row (docs/nag.md §7 Tier 2): the missing
+                                #   plain lambda=3 rung plus the four capped ones.
+                                "allxt-temp20l30",
+                                "allxt-temp20-nagn-l10", "allxt-temp20-nagn-l15",
+                                "allxt-temp20-nagn-l20", "allxt-temp20-nagn-l30"]},
                  "extra_contrasts": {"n17": [
                      # the 07-16 lambda=1 modality grid, each vs vanilla, plus
                      # the locus contrast that carries the story on language
@@ -689,6 +718,35 @@ AXES = {
                      ("allxt-temp20-late-l2", "vanilla"),
                      ("allxt-temp20-late-l2", "allxt-temp20l20"),   # flat parent, in-dist
                      ("allxt-temp20-late-l2", "allxt-late-l2"),     # branch swap at matched shape
+                     # 2026-08-26 NAG row (docs/nag.md §7, Tier 2 — the plateau CURVE).
+                     # Each capped rung against its uncapped twin isolates the cap at
+                     # fixed dose; lambda=1 is the inertness control (the cap clips
+                     # 0.8% of rows there, so this contrast should read ~0); and
+                     # nagn-l20 vs allxt-temp20 is the REGRET of using the shared
+                     # setting instead of this axis's own optimum, which is the
+                     # quantity the "one lambda, no per-axis tuning" claim is about.
+                     ("allxt-temp20l30", "vanilla"),
+                     ("allxt-temp20l30", "allxt-temp20l20"),
+                     ("allxt-temp20-nagn-l10", "allxt-temp20"),
+                     ("allxt-temp20-nagn-l15", "allxt-temp20l15"),
+                     ("allxt-temp20-nagn-l20", "allxt-temp20l20"),
+                     ("allxt-temp20-nagn-l30", "allxt-temp20l30"),
+                     ("allxt-temp20-nagn-l20", "allxt-temp20"),   # regret vs the axis optimum
+                     ("allxt-temp20-nagn-l30", "allxt-temp20"),
+                     ("allxt-temp20-nagn-l20", "vanilla"),
+                 ]},
+                 # The plateau itself: does the cap shrink the walk from this axis's
+                 # optimum (lambda=1) to the shared setting (lambda=2), and to 3?
+                 "extra_interactions": {"n17": [
+                     ("allxt-temp20-nagn-l20", "allxt-temp20-nagn-l10",
+                      "allxt-temp20l20", "allxt-temp20",
+                      "lambda 1->2 step, capped vs uncapped (>0 = plateau widened)"),
+                     ("allxt-temp20-nagn-l30", "allxt-temp20-nagn-l10",
+                      "allxt-temp20l30", "allxt-temp20",
+                      "lambda 1->3 step, capped vs uncapped"),
+                     ("allxt-temp20-nagn-l15", "allxt-temp20-nagn-l10",
+                      "allxt-temp20l15", "allxt-temp20",
+                      "lambda 1->1.5 step (should be ~0: the cap is inert here)"),
                  ]}},
 }
 
@@ -710,6 +768,30 @@ def mcnemar(a, b, keys):
         return n01, n10, 0.0, 1.0
     z = (n01 - n10) / math.sqrt(n01 + n10)
     return n01, n10, z, math.erfc(abs(z) / math.sqrt(2))
+
+def interaction(a, b, c, d, keys):
+    """Paired difference-in-differences: [a - b] - [c - d] on shared episodes.
+
+    McNemar tests ONE 2x2 table, so it cannot answer the question the NAG row is
+    for — "did the cap SHRINK the dose step" is a difference of two differences
+    (docs/nag.md §5.1). Every arm of an axis runs the same seed-0 schedule, so the
+    per-episode contrast x_i = (a_i - b_i) - (c_i - d_i) in {-2,...,2} is paired
+    and its mean has the ordinary SE; no 2x2 approximation is involved.
+
+    Returns (delta_pp, se_pp, z, p).
+    """
+    x = [(a[k]["succ"] - b[k]["succ"]) - (c[k]["succ"] - d[k]["succ"]) for k in keys]
+    n = len(x)
+    if n < 2:
+        return 0.0, 0.0, 0.0, 1.0
+    mean = sum(x) / n
+    var = sum((v - mean) ** 2 for v in x) / (n - 1)
+    se = math.sqrt(var / n)
+    if se == 0.0:
+        return 100 * mean, 0.0, 0.0, 1.0
+    z = mean / se
+    return 100 * mean, 100 * se, z, math.erfc(abs(z) / math.sqrt(2))
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -828,6 +910,24 @@ def main():
         print(f"  {a:13s} - {b:13s} {d:+6.2f}pp  disc {n01:3d}:{n10:3d}"
               f"  z={z:+5.2f}  p={p:.4g}  p_bonf={min(1.0, p * m):.4g} {mark}{n_note}")
     print("  (* survives Bonferroni; . nominal p<.05 only)")
+
+    # docs/nag.md §5.1: the plateau question is about the SHAPE of the dose
+    # response, i.e. whether the cap shrinks the step between two rungs. That is a
+    # 4-arm interaction, not a pair contrast, so it gets its own table.
+    inter = [t for t in list(mcfg.get("extra_interactions", []))
+             + list(cfg.get("extra_interactions", {}).get(args.model, []))
+             if all(x in arms for x in t[:4])]
+    if inter:
+        print("\n== dose-step interaction, paired (docs/nag.md §5.1): "
+              "[a - b] - [c - d] ==")
+        for a, b, c, d, note in inter:
+            ks = [k for k in data[a] if k in data[b] and k in data[c] and k in data[d]]
+            delta, se, z, pv = interaction(data[a], data[b], data[c], data[d], ks)
+            step_t = sr(a, ks) - sr(b, ks)
+            step_c = sr(c, ks) - sr(d, ks)
+            print(f"  [{a} - {b}] - [{c} - {d}]  n={len(ks)}")
+            print(f"     step {step_t:+6.2f}pp vs {step_c:+6.2f}pp -> "
+                  f"{delta:+6.2f}pp +/- {se:.2f}  z={z:+5.2f}  p={pv:.4g}   {note}")
 
     print("\n== key contrasts per suite ==")
     for a, b in [c for c in mcfg["suite_contrasts"] if c[0] in arms and c[1] in arms]:

@@ -73,6 +73,12 @@ _SCHEDULE_TRACK_MSG = (
     "[arm] --pladis-schedule is gr00t_n17-only: the pi05/smolvla hooks carry no "
     "denoising-step probe, so a schedule cannot be enforced there."
 )
+_NAG_TRACK_MSG = (
+    "[arm] --pladis-nag-* is gr00t_n17-only: neither the pi05 nor the smolvla hook "
+    "carries the NAG stages, and the joint-attention hooks already renormalize a key "
+    "sub-block by its dense row mass — stacking a feature-magnitude cap on a "
+    "probability-mass one needs its own derivation (docs/nag.md §1), not a port."
+)
 
 
 def parse_args():
@@ -148,6 +154,16 @@ def parse_args():
                         "strength everywhere. The head runs N=4 Euler steps at "
                         "t in {0,.25,.5,.75}; a zero-weight step takes the vanilla "
                         "fused-SDPA path, so this is the TIME coordinate of the locus")
+    p.add_argument("--pladis-nag-tau", type=float, default=None,
+                   help="gr00t_n17 only: NAG normalization threshold (docs/nag.md). "
+                        "Caps each (head, query row)'s attention output at tau x the "
+                        "DENSE branch's L1 magnitude, direction preserved. Default "
+                        "off = the pre-NAG path, bit-identical. tau >= 1")
+    p.add_argument("--pladis-nag-rho", type=float, default=1.0,
+                   help="gr00t_n17 only: NAG refinement weight, Z = rho*Z_capped + "
+                        "(1-rho)*Z_dense. Requires --pladis-nag-tau: with no cap it "
+                        "only rescales the dose to rho*scale (docs/nag.md 2b), which "
+                        "the lambda ladder has already run. Default 1 = no refinement")
     # pi0.5 key-axis geometry: [image(0:ni) | language(ni:ni+nl) | suffix]. Defaults are
     # the real pi05_libero layout — 3 image slots x 256 + max_token_len 200 = 968 prefix,
     # suffix = action_horizon 10. Re-validated against the live key_len at run time
@@ -213,6 +229,8 @@ def parse_args():
                 "pi05 kinds are text|image|prefix|all (attn_pi05 rejects the rest "
                 "only AFTER the model load)."
             )
+        if args.pladis_nag_tau is not None or args.pladis_nag_rho != 1.0:
+            raise SystemExit(_NAG_TRACK_MSG)
         if args.pladis_qgroup != "all":
             raise SystemExit(
                 "[arm] --pladis-qgroup is gr00t_n17-only: pi0.5's suffix is action-only "
@@ -246,6 +264,21 @@ def parse_args():
                     "[arm] --pladis-schedule without --pladis-install: a schedule with "
                     "no hook is a vanilla arm wearing an intervention's name."
                 )
+        if args.pladis_nag_tau is not None or args.pladis_nag_rho != 1.0:
+            # Same reason as the schedule parse above: a rejected combination should
+            # cost a second, not a suite's worth of startup. install_pladis re-runs
+            # this — it is the hook's own invariant, not a CLI convenience.
+            from pladis.attn_gr00t_n17 import validate_nag
+
+            try:
+                validate_nag(args.pladis_scale, args.pladis_nag_tau, args.pladis_nag_rho)
+            except ValueError as exc:
+                raise SystemExit(f"[arm] --pladis-nag-*: {exc}")
+            if not args.pladis_install:
+                raise SystemExit(
+                    "[arm] --pladis-nag-* without --pladis-install: a cap with no hook "
+                    "is a vanilla arm wearing an intervention's name."
+                )
         if args.pladis_kind not in ("all", "text", "image"):
             raise SystemExit(
                 "[arm] gr00t_n17 selects whole cross blocks: --pladis-kind all|text|"
@@ -259,6 +292,8 @@ def parse_args():
             raise SystemExit("[arm] --pladis-cells is gr00t_n17-only (per-kind qgroups).")
         if args.pladis_schedule != "all":
             raise SystemExit(_SCHEDULE_TRACK_MSG)
+        if args.pladis_nag_tau is not None or args.pladis_nag_rho != 1.0:
+            raise SystemExit(_NAG_TRACK_MSG)
         if args.pladis_qgroup == "state":
             raise SystemExit(
                 "[arm] --pladis-qgroup state is invalid for smolvla: the expert suffix "
@@ -393,9 +428,17 @@ def _assert_smolvla_delivery(sess, ts, first_spec, model) -> None:
           f"forward(s), prefix_len={CFG.prefix_len}", flush=True)
 
 
-def _assert_n17_step_delivery(sess, ts, first_spec, model) -> None:
-    """gr00t_n17 counterpart for --pladis-schedule: prove the blend fired at exactly
-    the weighted denoising steps, at the right strengths, BEFORE logging an episode.
+def _assert_n17_delivery(sess, ts, first_spec, model, *, schedule: bool, nag: bool) -> None:
+    """gr00t_n17 counterpart of the pi05/smolvla warm-ups: prove the run-time-enforced
+    parts of the arm actually fire, BEFORE logging an episode.
+
+    Two things are enforced at RUN time here and are therefore invisible to any
+    install-time check — the step schedule (a forward pre-hook publishes the index)
+    and the NAG cap (whether any query row's ratio exceeds tau is data-dependent).
+    One warm-up chunk exercises both, so they are asserted together.
+
+    For --pladis-schedule: prove the blend fired at exactly the weighted denoising
+    steps, at the right strengths.
 
     Block selection is already proven by install_pladis's non-empty return, but the
     step gate is enforced at RUN time by a forward pre-hook, so nothing before the
@@ -404,17 +447,24 @@ def _assert_n17_step_delivery(sess, ts, first_spec, model) -> None:
     the arm as vanilla (or at full schedule) for all 1,537 episodes while the eplog
     and .arm sidecar claim a partial schedule.
 
+    For --pladis-nag-tau: prove the cap FIRED. A tau nothing exceeds makes the arm
+    bit-identical to its uncapped control (docs/nag.md §2a), so it would burn the
+    full episode set re-measuring an arm the campaign already has.
+
     RNG containment is the same as the pi05/smolvla warm-ups: run_episode reseeds the
     global stream before every chunk (harness/rollout.py:131) and sess.reset() re-runs
     for real when the loop starts, so the logged rollout is bit-identical to one
     without the warm-up.
     """
-    from pladis.attn_gr00t_n17 import assert_delivered
+    from pladis.attn_gr00t_n17 import assert_delivered, assert_nag_delivered
 
     raw_obs, instruction = sess.reset(first_spec, ts.init_states_of(first_spec.task_name))
     with torch.no_grad():
         model.predict_chunk(model.wrap_obs(raw_obs, instruction))
-    print(f"[arm] PLADIS step schedule delivered: {assert_delivered()}", flush=True)
+    if schedule:
+        print(f"[arm] PLADIS step schedule delivered: {assert_delivered()}", flush=True)
+    if nag:
+        print(f"[arm] NAG delivered: {assert_nag_delivered()}", flush=True)
 
 
 def main():
@@ -470,6 +520,12 @@ def main():
             from pladis.attn_gr00t_n17 import fmt_schedule, parse_schedule
 
             steps_clause = f",sched{fmt_schedule(parse_schedule(args.pladis_schedule))}"
+        # Same append-only discipline as steps_clause: NAG postdates every eplog on
+        # this track, so an arm without it must keep a byte-identical signature.
+        if args.pladis_nag_tau is None:
+            nag_clause = ""
+        else:
+            nag_clause = f",nagt{args.pladis_nag_tau:g},nagr{args.pladis_nag_rho:g}"
         pladis_clause = (
             f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
             f"b{args.pladis_beta:g},"
@@ -478,6 +534,7 @@ def main():
                else f"q{args.pladis_qgroup},k{args.pladis_kind},")
             + f"ns{args.pladis_n_state_tokens}"
             + steps_clause
+            + nag_clause
         )
 
     arm_signature = "|".join(
@@ -570,6 +627,8 @@ def main():
                 beta=args.pladis_beta,
                 n_state_tokens=args.pladis_n_state_tokens,
                 schedule=args.pladis_schedule,
+                nag_tau=args.pladis_nag_tau,
+                nag_rho=args.pladis_nag_rho,
             )
         else:
             installed = hooks.install_pladis(
@@ -581,6 +640,8 @@ def main():
                 qgroup=args.pladis_qgroup,
                 n_state_tokens=args.pladis_n_state_tokens,
                 schedule=args.pladis_schedule,
+                nag_tau=args.pladis_nag_tau,
+                nag_rho=args.pladis_nag_rho,
             )
         print(f"[arm] PLADIS installed on blocks {installed}", flush=True)
     else:
@@ -604,6 +665,8 @@ def main():
     if args.pladis_install and args.pladis_schedule != "all":
         # the schedule is part of what a reviewer watching the video is judging
         arm_tag += f" sched {args.pladis_schedule}"
+    if args.pladis_install and args.pladis_nag_tau is not None:
+        arm_tag += f" nag t={args.pladis_nag_tau:g} r={args.pladis_nag_rho:g}"
     video_label = f"{model_tag} | {arm_tag}"
 
     from harness.env import RUNTIME_RNG_AXES
@@ -615,8 +678,10 @@ def main():
     elif args.model == "smolvla" and args.pladis_install:
         _assert_smolvla_delivery(sess, ts, todo[0], model)
     elif (args.model == "gr00t_n17" and args.pladis_install
-          and args.pladis_schedule != "all"):
-        _assert_n17_step_delivery(sess, ts, todo[0], model)
+          and (args.pladis_schedule != "all" or args.pladis_nag_tau is not None)):
+        _assert_n17_delivery(sess, ts, todo[0], model,
+                             schedule=args.pladis_schedule != "all",
+                             nag=args.pladis_nag_tau is not None)
 
     instruction_map = (
         (lambda spec: _task_meta_instruction(spec.base_task))

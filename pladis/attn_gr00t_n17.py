@@ -45,6 +45,24 @@ so with ``pladis_scale=1`` the vector IS the lambda schedule:
 A step whose lambda_i is 0 takes the same fused-SDPA path lambda=0 takes, so it
 is bit-identical to vanilla there. The step index of the forward in flight is
 published by a DiT pre-hook (:func:`_install_step_probe`) into :data:`SCHED`.
+
+Also new here (2026-08-26): ``nag_tau``/``nag_rho`` add the two stabilization
+stages of NAG (arXiv:2505.21179, Eq. 8-10) on top of the blend, in the mapping
+of ``docs/nag.md`` §1 — the DENSE branch is NAG's positive baseline ``Z+``,
+because our un-guided setting is lambda=0 (vanilla), exactly as NAG's is phi=0:
+
+    Z_PL      = Z_d + lambda*(Z_s - Z_d)          # the blend, in output space
+    R[i]      = ||Z_PL[i]||_1 / (||Z_d[i]||_1 + eps)     # per (head, query row)
+    Z_NPL[i]  = min(R[i], tau)/R[i] * Z_PL[i]     # NORMALIZATION (magnitude cap)
+    Z_final   = rho*Z_NPL + (1 - rho)*Z_d         # REFINEMENT (pull to baseline)
+
+``nag_tau=None`` (the default) leaves the pre-NAG code path untouched, and the
+NAG path with ``nag_tau=None, nag_rho=1`` is bit-identical to it (gate A of
+verify_nag.py) — the cap contributes a factor of exactly 1.0 on uncapped rows.
+Two consequences from docs/nag.md §2 that the interface enforces rather than
+documents: refinement alone (rho<1, tau off) is the SAME arm as scale=rho*lambda
+(so it raises), and lambda=0 with NAG armed is rejected (base0 must stay on the
+fused-SDPA parity path, and R == 1 there makes the cap a no-op anyway).
 """
 
 from __future__ import annotations
@@ -178,6 +196,169 @@ def assert_delivered() -> str:
             f"dense-SDPA calls/step {skipped}")
 
 
+# Guards a zero-magnitude baseline row in the ratio ONLY. It is deliberately not
+# added to the second denominator (the operator's deck writes min(R,tau)/(R+eps)):
+# that form multiplies every UNCAPPED row by R/(R+eps) < 1, a silent shrink of the
+# rows the method says pass through unchanged, which would break both the tau-off
+# nesting and the untouched-row bit-parity of the qgroup split (docs/nag.md §3).
+_NAG_EPS = 1e-6
+
+# The tau grid docs/nag.md §6 pre-registers. The census counts exceedances against
+# every candidate in one pass, so ONE diag run at a given lambda yields the clip
+# rate of all of them — the selection rule is then read off, not re-measured.
+NAG_CANDIDATE_TAUS = (1.0, 1.1, 1.25, 1.5, 2.0, 2.5)
+
+
+class _NagCensus:
+    """Per-inference census of the L1 ratio R and of the cap that acts on it.
+
+    Same role as :data:`SCHED` for the step schedule: it is what turns "the arm
+    silently ran as something else" into a hard error (:func:`assert_nag_delivered`),
+    and in ``probe`` mode it is the measurement instrument of experiments/diag_nag.py.
+    Keyed by (denoising step, block index, query-row group) so a reading can be
+    marginalized any of the three ways docs/nag.md §6 asks for.
+    """
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.tau: Optional[float] = None  # None = cap off (probe may still record)
+        self.rho: float = 1.0
+        self.probe: bool = False  # record R even with the cap off (diag_nag.py)
+        # Extra lambdas to evaluate R at, from the SAME dense/sparse pair the arm
+        # computed: R(l) = ||Z_d + (l/lam)*(Z_PL - Z_d)||_1 / ||Z_d||_1. That is what
+        # lets one rollout price every rung of the dose ladder on ONE trajectory,
+        # instead of one rollout per lambda on four different ones.
+        self.probe_scales: tuple = ()
+        # cap ledger, key = (step, block, qgroup) -- only the arm's own lambda
+        self.n: dict = {}  # key -> query-row slots the cap saw
+        self.n_clipped: dict = {}  # key -> slots the cap actually shrank
+        self.r_max: dict = {}  # key -> max R
+        # probe ledger, key = (step, block, qgroup, lambda) -- measurement only
+        self.p_n: dict = {}
+        self.p_sum: dict = {}
+        self.p_max: dict = {}
+        self.p_exceed: dict = {}  # key -> per-candidate-tau exceedance counts
+        self.p_hist: dict = {}  # key -> histogram of R
+
+    # 0..8 in 0.05 steps; every candidate tau lands ON an edge. The top matters:
+    # the first measurement (language/libero_10) put p90 at 2.65 and the max at 12.4
+    # for lambda=2, so a 4.0 ceiling silently reported a saturated p99 as "4.00".
+    # Exceedance counts are exact regardless -- only the quantiles read the histogram.
+    _HIST_HI, _HIST_BINS = 8.0, 160
+
+    def arm(self, tau: Optional[float], rho: float) -> None:
+        if self.tau is not None and tau is not None and self.tau != tau:
+            raise ValueError(
+                f"conflicting NAG thresholds on one model: tau={self.tau} then {tau} "
+                f"— every cell of an arm must share one cap."
+            )
+        if self.rho != 1.0 and rho != 1.0 and self.rho != rho:
+            raise ValueError(
+                f"conflicting NAG blend weights on one model: rho={self.rho} then {rho}."
+            )
+        if tau is not None:
+            self.tau = float(tau)
+        if rho != 1.0:
+            self.rho = float(rho)
+
+    def record_cap(self, key, ratio: torch.Tensor, clipped: torch.Tensor) -> None:
+        """One (step, block, qgroup) cell of the arm's own cap activity."""
+        self.n[key] = self.n.get(key, 0) + ratio.numel()
+        self.n_clipped[key] = self.n_clipped.get(key, 0) + int(clipped.sum())
+        self.r_max[key] = max(self.r_max.get(key, 0.0), float(ratio.max()))
+
+    def record_probe(self, key, ratio: torch.Tensor) -> None:
+        """One (step, block, qgroup, lambda) cell of the measured R distribution."""
+        r = ratio.detach().reshape(-1).float()
+        self.p_n[key] = self.p_n.get(key, 0) + r.numel()
+        self.p_sum[key] = self.p_sum.get(key, 0.0) + float(r.sum())
+        self.p_max[key] = max(self.p_max.get(key, 0.0), float(r.max()))
+        ex = self.p_exceed.setdefault(key, [0] * len(NAG_CANDIDATE_TAUS))
+        for i, t in enumerate(NAG_CANDIDATE_TAUS):
+            ex[i] += int((r > t).sum())
+        h = torch.histc(r.clamp(max=self._HIST_HI), bins=self._HIST_BINS,
+                        min=0.0, max=self._HIST_HI).cpu()
+        prev = self.p_hist.get(key)
+        self.p_hist[key] = h if prev is None else prev + h
+
+    @property
+    def clip_rate(self) -> float:
+        """Fraction of (head, query row) slots the cap shrank, over the whole run."""
+        total = sum(self.n.values())
+        return 0.0 if not total else sum(self.n_clipped.values()) / total
+
+
+NAG = _NagCensus()
+
+
+def fmt_nag(tau: Optional[float], rho: float) -> str:
+    """Canonical NAG string for signatures/logs: ``off`` or ``tau=1.25,rho=1``."""
+    return "off" if tau is None else f"tau={tau:g},rho={rho:g}"
+
+
+def validate_nag(pladis_scale: float, tau: Optional[float], rho: float) -> None:
+    """Reject the three NAG settings that would silently be a different arm.
+
+    Called at install AND from eval_arm's argument layer, so a bad combination
+    dies before a checkpoint is loaded rather than after 1,537 episodes.
+    """
+    if tau is not None and tau < 1.0:
+        # tau < 1 caps the guided output BELOW the dense branch's own magnitude:
+        # no longer a guardrail on the extrapolation but an attenuation of vanilla.
+        raise ValueError(f"NAG tau must be >= 1, got {tau}.")
+    if not 0.0 < rho <= 1.0:
+        raise ValueError(f"NAG rho must lie in (0, 1], got {rho}.")
+    if rho != 1.0 and tau is None:
+        # docs/nag.md §2(b): with no cap, rho only rescales the dose --
+        # Z = Z_d + (rho*lambda)*(Z_s - Z_d) -- so this is the plain arm at
+        # scale=rho*lambda, and the dose ladder has already run those rungs.
+        raise ValueError(
+            f"NAG rho={rho:g} without a tau is the plain arm at "
+            f"scale={rho * pladis_scale:g} under another name (docs/nag.md §2b); "
+            f"pass --pladis-nag-tau or use --pladis-scale directly."
+        )
+    if tau is not None and pladis_scale == 0.0:
+        raise ValueError(
+            "NAG with pladis_scale=0 is rejected: base0 must stay on the fused-SDPA "
+            "bit-parity path, and R == 1 makes the cap a no-op there anyway."
+        )
+
+
+def assert_nag_delivered() -> str:
+    """Prove the cap actually fired; return the census line the caller prints.
+
+    The failure this converts into a hard error: a tau nothing exceeds makes the
+    arm bit-identical to its own control (docs/nag.md §2a), so it would burn a
+    full sweep to re-measure an arm we already have.
+    """
+    if NAG.tau is None:
+        raise RuntimeError("assert_nag_delivered() called on an arm with no NAG cap.")
+    if not NAG.n:
+        raise RuntimeError(
+            f"NAG is armed ({fmt_nag(NAG.tau, NAG.rho)}) but no attention call "
+            f"recorded a ratio — the processors never ran, so the cap was never applied."
+        )
+    total, clipped = sum(NAG.n.values()), sum(NAG.n_clipped.values())
+    if clipped == 0:
+        r_max = max(NAG.r_max.values())
+        raise RuntimeError(
+            f"NAG cap never fired: max R observed {r_max:.4f} <= tau={NAG.tau:g} over "
+            f"{total} query-row slots. This arm is bit-identical to its uncapped "
+            f"control (docs/nag.md §2a) — pick tau from the diag, do not run it."
+        )
+    per_step: dict = {}
+    for key, n in NAG.n.items():
+        acc = per_step.setdefault(key[0], [0, 0])
+        acc[0] += n
+        acc[1] += NAG.n_clipped.get(key, 0)
+    rates = {k: round(v[1] / v[0], 4) for k, v in sorted(per_step.items())}
+    return (f"nag={fmt_nag(NAG.tau, NAG.rho)}; clip rate {clipped}/{total} = "
+            f"{clipped / total:.2%}; per step {rates}; "
+            f"max R {max(NAG.r_max.values()):.3f}")
+
+
 class PLADISAttnProcessor:
     """Dense/sparse-extrapolation attention processor (single forward pass)."""
 
@@ -189,6 +370,9 @@ class PLADISAttnProcessor:
         qgroup: str = "all",
         n_state_tokens: int = 1,
         schedule: Optional[tuple] = None,
+        nag_tau: Optional[float] = None,
+        nag_rho: float = 1.0,
+        block_idx: int = -1,
     ) -> None:
         self.pladis_scale = float(pladis_scale)
         self.method = method
@@ -203,6 +387,56 @@ class PLADISAttnProcessor:
         # scales it per step, keyed on SCHED.current (published per DiT forward by
         # _install_step_probe).
         self.schedule = schedule
+        # NAG (docs/nag.md): None = cap off, which keeps the pre-NAG code path.
+        validate_nag(self.pladis_scale, nag_tau, nag_rho)
+        self.nag_tau = None if nag_tau is None else float(nag_tau)
+        self.nag_rho = float(nag_rho)
+        # census key component: WHICH block a ratio came from. Only the diag reads
+        # it, but it costs nothing to carry and cannot be recovered afterwards.
+        self.block_idx = int(block_idx)
+
+    def _nag(self, z_blend: torch.Tensor, z_dense: torch.Tensor, lam: float, step) -> torch.Tensor:
+        """NAG normalization + refinement on the attention OUTPUT (docs/nag.md §1).
+
+        ``z_blend`` is Z_PL (the blend already applied), ``z_dense`` is Z_d, NAG's
+        positive baseline. Both are (B, H, Lq, D_head) — the same shape the paper's
+        Algorithm 1 reduces over with ``p=1, dim=-1``, so the norm is per
+        (batch, head, query row) over the head channels, not over the merged heads.
+        """
+        # float32 for the ratio and the cap: an L1 norm over a head's bf16 channels
+        # is not worth the precision, and f32->bf16 round-trips exactly, so the
+        # uncapped rows stay bit-identical to the pre-NAG path.
+        num = z_blend.float().abs().sum(dim=-1, keepdim=True)
+        den = z_dense.float().abs().sum(dim=-1, keepdim=True)
+        ratio = num / (den + _NAG_EPS)
+        key = (step, self.block_idx, self.qgroup)
+        if NAG.probe:
+            NAG.record_probe(key + (lam,), ratio)
+            # Every other rung of the ladder, from the same two features: the blend
+            # is affine in lambda, so Z(l) = Z_d + (l/lam)*(Z_PL - Z_d) exactly.
+            if NAG.probe_scales:
+                delta = z_blend.float() - z_dense.float()
+                for other in NAG.probe_scales:
+                    if other == lam:
+                        continue
+                    r_other = (z_dense.float() + (other / lam) * delta).abs().sum(
+                        dim=-1, keepdim=True) / (den + _NAG_EPS)
+                    NAG.record_probe(key + (other,), r_other)
+        if self.nag_tau is None:
+            return z_blend  # probe mode: measure, change nothing
+        # The published form (Algorithm 1): where(R > tau, tau/R, 1). Uncapped rows
+        # get a factor of EXACTLY 1.0, which is what makes tau-off nesting and the
+        # qgroup bit-parity hold; min(R,tau)/(R+eps) would shrink them all slightly.
+        clipped = ratio > self.nag_tau
+        scale = torch.where(clipped, self.nag_tau / ratio, torch.ones_like(ratio))
+        NAG.record_cap(key, ratio, clipped)
+        z = z_blend.float() * scale
+        if self.nag_rho != 1.0:
+            # Refinement pulls EVERY row toward the baseline, not only capped ones
+            # (Eq. 10) — which is exactly why it is a dose rescale wherever the cap
+            # is inactive (docs/nag.md §2b).
+            z = self.nag_rho * z + (1.0 - self.nag_rho) * z_dense.float()
+        return z.to(z_blend.dtype)
 
     def _lambda_now(self) -> float:
         """Effective blend strength for the denoising step in flight.
@@ -235,6 +469,24 @@ class PLADISAttnProcessor:
             SCHED.n_applied[step] = SCHED.n_applied.get(step, 0) + 1
             SCHED.lam[step] = lam
         return lam
+
+    def _split_point(self, n_query: int) -> Optional[int]:
+        """``n_state_tokens`` if this processor gates a query group, else None.
+
+        A wrong n_state_tokens mis-slices the two groups SILENTLY (no shape error —
+        cat() reassembles any split), so the whole state/action contrast would be
+        meaningless. Check the split is non-degenerate against the live query length.
+        """
+        if self.qgroup == "all":
+            return None
+        ns = self.n_state_tokens
+        if not 0 < ns < n_query:
+            raise ValueError(
+                f"n_state_tokens={ns} does not split a {n_query}-row query "
+                f"sequence into non-empty [state; action] groups — the "
+                f"qgroup={self.qgroup!r} arm would be degenerate."
+            )
+        return ns
 
     def _sparse(self, logits: torch.Tensor) -> torch.Tensor:
         z = self.beta * logits
@@ -330,31 +582,43 @@ class PLADISAttnProcessor:
             dense = torch.softmax(logits, dim=-1)
             sparse = self._sparse(logits)
             attn_weight = dense + lam * (sparse - dense)
-            if self.qgroup != "all":
-                # Query rows are [state(0:n_state_tokens); action(n_state_tokens:)].
-                # Keep the blend only on the selected group; all other rows stay dense.
-                ns = self.n_state_tokens
-                # A wrong n_state_tokens mis-slices the two groups SILENTLY (no
-                # shape error — cat() reassembles any split), so the whole
-                # state/action contrast would be meaningless. Check the split is
-                # non-degenerate against the live query length instead.
-                n_query = attn_weight.shape[-2]
-                if not 0 < ns < n_query:
-                    raise ValueError(
-                        f"n_state_tokens={ns} does not split a {n_query}-row query "
-                        f"sequence into non-empty [state; action] groups — the "
-                        f"qgroup={self.qgroup!r} arm would be degenerate."
-                    )
-                if self.qgroup == "state":
-                    attn_weight = torch.cat(
-                        [attn_weight[..., :ns, :], dense[..., ns:, :]], dim=-2
-                    )
-                else:  # action
-                    attn_weight = torch.cat(
-                        [dense[..., :ns, :], attn_weight[..., ns:, :]], dim=-2
-                    )
-            attn_weight = attn_weight.to(value.dtype)
-            hidden_states = torch.matmul(attn_weight, value)
+            # Query rows are [state(0:n_state_tokens); action(n_state_tokens:)].
+            # Keep the intervention only on the selected group; the rest stays dense.
+            ns = self._split_point(attn_weight.shape[-2])
+            if self.nag_tau is None and not NAG.probe:
+                # Pre-NAG path, kept verbatim: lambda>0 arms carry no bit-parity gate,
+                # so re-associating these ops would make 44k+ collected episodes
+                # non-reproducible. NAG never touches it.
+                if ns is not None:
+                    if self.qgroup == "state":
+                        attn_weight = torch.cat(
+                            [attn_weight[..., :ns, :], dense[..., ns:, :]], dim=-2
+                        )
+                    else:  # action
+                        attn_weight = torch.cat(
+                            [dense[..., :ns, :], attn_weight[..., ns:, :]], dim=-2
+                        )
+                attn_weight = attn_weight.to(value.dtype)
+                hidden_states = torch.matmul(attn_weight, value)
+            else:
+                # NAG needs the dense branch as a FEATURE, not just as a map, so the
+                # blend is taken into output space first (docs/nag.md §1). Row i of a
+                # matmul depends only on row i of the left operand, so the selected
+                # rows here are bit-identical to the slice-then-matmul above, and the
+                # qgroup select moves AFTER the cap: blending rho on the untouched
+                # rows would return rho*x + (1-rho)*x, which is not bit-exactly x.
+                z_blend = torch.matmul(attn_weight.to(value.dtype), value)
+                z_dense = torch.matmul(dense.to(value.dtype), value)
+                hidden_states = self._nag(z_blend, z_dense, lam, SCHED.current)
+                if ns is not None:
+                    if self.qgroup == "state":
+                        hidden_states = torch.cat(
+                            [hidden_states[..., :ns, :], z_dense[..., ns:, :]], dim=-2
+                        )
+                    else:  # action
+                        hidden_states = torch.cat(
+                            [z_dense[..., :ns, :], hidden_states[..., ns:, :]], dim=-2
+                        )
         # -------------------------------------------------------------------------------
 
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
@@ -501,6 +765,8 @@ def install_pladis(
     qgroup: str = "all",
     n_state_tokens: int = 1,
     schedule=None,
+    nag_tau: Optional[float] = None,
+    nag_rho: float = 1.0,
 ) -> List[int]:
     """Install PLADISAttnProcessor on selected cross blocks; returns the block idxs used.
 
@@ -508,9 +774,11 @@ def install_pladis(
     all cross blocks of ``kind`` (text|image|all) are targeted. ``qgroup`` restricts
     the blend to state/action query rows, ``schedule`` scales it per denoising step
     (see module docstring); both default to "everything", leaving the pre-existing
-    code path.
+    code path. ``nag_tau``/``nag_rho`` add the NAG cap and refinement on top
+    (docs/nag.md); ``nag_tau=None`` (the default) leaves that path untouched too.
     """
     dit = _find_alternate_dit(model)
+    validate_nag(pladis_scale, nag_tau, nag_rho)
     sched = parse_schedule(schedule)
     if sched is not None:
         head = _find_action_head(model)
@@ -533,6 +801,13 @@ def install_pladis(
             )
         _install_step_probe(dit, head)
         SCHED.arm(sched, n_steps)
+    if nag_tau is not None or NAG.probe:
+        # The census is keyed by denoising step, so a NAG arm needs the step index
+        # even without a schedule. The probe is numerically inert (it only publishes
+        # SCHED.current), which is why arming it here cannot change what an arm
+        # computes — it is simply not installed when NAG is off.
+        _install_step_probe(dit, _find_action_head(model))
+        NAG.arm(nag_tau, nag_rho)
     if blocks is None:
         blocks = cross_block_indices(dit, kind=kind)
     targets = set(blocks)
@@ -547,6 +822,9 @@ def install_pladis(
                     qgroup=qgroup,
                     n_state_tokens=n_state_tokens,
                     schedule=sched,
+                    nag_tau=nag_tau,
+                    nag_rho=nag_rho,
+                    block_idx=idx,
                 )
             )
             installed.append(idx)
@@ -565,7 +843,8 @@ def install_pladis(
         f"[PLADIS] installed on blocks {installed} "
         f"(scale={pladis_scale}, method={method}, beta={beta}, kind={kind}, "
         f"qgroup={qgroup}, n_state_tokens={n_state_tokens}, "
-        f"schedule={fmt_schedule(sched)}, n_layers={len(dit.transformer_blocks)})"
+        f"schedule={fmt_schedule(sched)}, nag={fmt_nag(nag_tau, nag_rho)}, "
+        f"n_layers={len(dit.transformer_blocks)})"
     )
     print(msg, flush=True)
     print(msg, file=sys.stderr, flush=True)  # survives SIGTERM before stdout buffer flush
@@ -580,6 +859,8 @@ def install_pladis_cells(
     beta: float = 1.0,
     n_state_tokens: int = 1,
     schedule=None,
+    nag_tau: Optional[float] = None,
+    nag_rho: float = 1.0,
 ) -> List[int]:
     """Install a (possibly different) qgroup per key-kind block set.
 
@@ -609,5 +890,7 @@ def install_pladis_cells(
             qgroup=qgroup,
             n_state_tokens=n_state_tokens,
             schedule=schedule,
+            nag_tau=nag_tau,
+            nag_rho=nag_rho,
         )
     return sorted(installed)

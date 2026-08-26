@@ -60,7 +60,9 @@ wait_ckpt() {
 # rather than a driver that quietly runs nothing.
 ARMS="vanilla base0 actionximage actionxtext statextext stateximage allxall \
 allxt-temp20l20 allxt-temp20l15 allxt-temp20 \
-allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2"
+allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 \
+allxt-temp20l30 allxt-temp20-nagn-l10 allxt-temp20-nagn-l15 \
+allxt-temp20-nagn-l20 allxt-temp20-nagn-l30"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -157,5 +159,40 @@ run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --plad
 # matched shape). The iso-dose flat control allxt-temp20 is collected here too, so
 # that reading comes for free.
 run allxt-temp20-late-l2 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+
+# 2026-08-26 NAG normalization row (docs/nag.md; operator's 260821 deck §2 "NAG
+# Normalization in Ours"). PROBLEM: the all-x-text beta=2 family is the strongest
+# intervention on four axes, but its best lambda is not the same one — original
+# peaks at 1.0, noise at 1.5, language and robot at 2.0, and one dose rung swings
+# 4.2pp across axes with the sign flipping. NAG caps each (head, query row)'s
+# attention output at tau x the DENSE branch's L1 magnitude, direction preserved:
+#     R      = ||Z_d + lambda(Z_s - Z_d)||_1 / ||Z_d||_1        per query row
+#     Z_NPL  = min(R, tau)/R * Z_PL                             (rho=1: no refinement)
+# The question is not "is it better here" but whether the cap WIDENS THE PLATEAU,
+# so that ONE setting (lambda=2, tau=2.5 — shared across axes, never tuned per
+# axis, or the claim is empty) is near-optimal everywhere.
+# tau=2.5 comes from experiments/diag_nag.py, not from the paper: measured on this
+# checkpoint it clips 0.8% of query rows at lambda=1, 4.6% at 1.5, 11.9% at 2 and
+# 31.8% at 3 — inert where each axis's ladder is healthy, active where it turns
+# over (the docs/nag.md §6 rule; it is also the paper's own default, by coincidence).
+# rho<1 is deliberately NOT run: with the cap inactive it is algebraically the plain
+# arm at scale=rho*lambda (docs/nag.md §2b), a rung this ladder already has.
+# TIER 2, the plateau CURVE. This axis is 400 episodes (~1.3 h/arm) and falls
+# fastest from its lambda=1 optimum (-2.25pp by lambda=2, z=-1.80), so the whole
+# shape story fits here for the price of one language arm. Four capped rungs plus
+# the one plain rung the ladder is missing (lambda=3), giving both curves on the
+# same episodes:
+#   plain  lambda 1 / 1.5 / 2   collected        + lambda 3 below
+#   capped lambda 1 / 1.5 / 2 / 3               all below
+# lambda=1 doubles as the INERTNESS CONTROL: a selective tau must leave this axis's
+# own optimum essentially unchanged (it clips 0.8% of rows there).
+# POWER: n=400 gives a paired SE of ~1.5pp, so this row shows whether the cap does
+# anything at all — it cannot settle a 2pp question by itself, which is why the
+# 20 h/arm `noise` axis is only funded after the diag's cross-axis ranking holds.
+run allxt-temp20l30       --pladis-install --pladis-scale 3.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
+run allxt-temp20-nagn-l10 --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+run allxt-temp20-nagn-l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+run allxt-temp20-nagn-l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+run allxt-temp20-nagn-l30 --pladis-install --pladis-scale 3.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 
 echo "[orig] ALL DONE $(date +%H:%M:%S)"

@@ -162,4 +162,25 @@ fi
 echo "[robot] base0 parity gate PASSED"
 run base0 --pladis-install --pladis-scale 1.0 --pladis-method softmax
 
+# 2026-08-26 NAG normalization row (docs/nag.md; operator's 260821 deck §2 "NAG
+# Normalization in Ours"). PROBLEM: the all-x-text beta=2 family is the strongest
+# intervention on four axes, but its best lambda is not the same one — original
+# peaks at 1.0, noise at 1.5, language and robot at 2.0, and one dose rung swings
+# 4.2pp across axes with the sign flipping. NAG caps each (head, query row)'s
+# attention output at tau x the DENSE branch's L1 magnitude, direction preserved:
+#     R      = ||Z_d + lambda(Z_s - Z_d)||_1 / ||Z_d||_1        per query row
+#     Z_NPL  = min(R, tau)/R * Z_PL                             (rho=1: no refinement)
+# The question is not "is it better here" but whether the cap WIDENS THE PLATEAU,
+# so that ONE setting (lambda=2, tau=2.5 — shared across axes, never tuned per
+# axis, or the claim is empty) is near-optimal everywhere.
+# tau=2.5 comes from experiments/diag_nag.py, not from the paper: measured on this
+# checkpoint it clips 0.8% of query rows at lambda=1, 4.6% at 1.5, 11.9% at 2 and
+# 31.8% at 3 — inert where each axis's ladder is healthy, active where it turns
+# over (the docs/nag.md §6 rule; it is also the paper's own default, by coincidence).
+# rho<1 is deliberately NOT run: with the cap inactive it is algebraically the plain
+# arm at scale=rho*lambda (docs/nag.md §2b), a rung this ladder already has.
+# This axis also peaks at lambda=2, so like language it tests whether the cap is
+# free where the dose already works. Control: allxt-temp20l20 (collected).
+run allxt-temp20-nagn-l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+
 echo "[robot] ALL DONE $(date +%H:%M:%S)"

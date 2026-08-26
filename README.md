@@ -91,6 +91,47 @@ bit-identical to the unscheduled arm at the same scale and needs no separate run
 training mass in the four intervals the inference grid spans — the halves are not
 equally well trained, and that asymmetry is part of what the contrast measures.
 
+### 1.2.1 Bounding the blend: NAG normalization (N1.7 only)
+
+The blend is an extrapolation in attention-**output** space: because `Z = W·V`
+is linear in `W`,
+
+```
+Z_PL = Z_d + λ · (Z_s − Z_d),        Z_d = W_dense·V,  Z_s = W_sparse·V
+```
+
+so a λ > 1 arm leaves the convex hull of the value vectors and its per-query
+magnitude is unbounded in λ. NAG (arXiv:2505.21179, Eq. 8-10) bounds it with a
+per-(head, query row) L1 cap against the dense branch, followed by an optional
+pull back toward it:
+
+```
+R[i]     = ‖Z_PL[i]‖₁ / (‖Z_d[i]‖₁ + ε)                (ε = 1e-6)
+Z_NPL[i] = min(R[i], τ) / R[i] · Z_PL[i]               --pladis-nag-tau
+Z_final  = ρ · Z_NPL + (1 − ρ) · Z_d                   --pladis-nag-rho
+```
+
+| axis | values | mechanism |
+|---|---|---|
+| magnitude cap (`--pladis-nag-tau`) | off (default) / τ ≥ 1 | per (head, query row): the guided output may exceed the dense branch's L1 magnitude by at most τ×, direction preserved |
+| refinement (`--pladis-nag-rho`) | `1` (default) / 0 < ρ ≤ 1 | blend back toward the dense feature; requires a τ |
+
+The mapping is fixed by the fixed point: NAG's un-guided setting is φ=0 → `Z⁺`,
+ours is λ=0 → `Z_d`, so **the dense branch is NAG's positive baseline**. Two
+consequences are enforced rather than documented (`verify_nag.py` gates A, B, F):
+
+* τ off with ρ=1 is **bit-identical** to the pre-NAG path, so a NAG arm is
+  comparable to every arm collected before it existed;
+* wherever the cap is inactive, `Z_final = Z_d + (ρ·λ)(Z_s − Z_d)` — refinement
+  alone is the plain arm at `scale = ρ·λ`, so `--pladis-nag-rho` without a τ is
+  rejected instead of silently re-running a rung of the dose ladder.
+
+τ is a **measured** quantity, not the paper's default: `experiments/diag_nag.py`
+prices the whole dose ladder on one trajectory (`R(λ')` is exact from any arm's
+own two features, `verify_nag.py` gate H) and reports the clip rate per candidate
+τ, per denoising step and per block. `docs/nag.md` states the selection rule and
+what each outcome would mean.
+
 ### 1.3 Intervention loci in π0.5
 
 π0.5 has **no cross-attention module**. Its action ("suffix") tokens attend
@@ -164,6 +205,7 @@ corresponds to the **action row** of the 2×2 grid of §1.2, extended along λ.
 | mixed cells | `--pladis-scale λ --pladis-cells <cell,cell>` | per-kind query groups |
 | temperature control | `--pladis-scale 1.0 --pladis-method softmax --pladis-beta β` | sharpened-softmax counterpart to a sparse cell |
 | step-scheduled cell | `--pladis-scale λ --pladis-qgroup … --pladis-kind … --pladis-schedule 1,1,0,0` | a locus cell with a per-step λ profile, λ_i = λ·w_i (§1.2); its all-steps parent and its same-Σw mirror are the paired references |
+| NAG-capped cell | `--pladis-scale λ --pladis-qgroup … --pladis-kind … --pladis-nag-tau τ` | a locus cell whose per-query output magnitude is bounded at τ× the dense branch (§1.2.1); the paired reference is the **same cell without the cap**, so the contrast carries no dose confound |
 
 **The control arms differ between tracks, and not arbitrarily.** GR00T's vanilla
 runs fused SDPA while λ>0 must materialize weights on an eager path, so `base0`
@@ -480,6 +522,7 @@ bash experiments/run.sh experiments/eval_arm.py \
 | `--pladis-qgroup` / `--pladis-kind` / `--pladis-cells` | intervention locus (§1.2) |
 | `--pladis-n-state-tokens` | leading state query rows (N1.7: 1); defines the `state`/`action` split |
 | `--pladis-schedule` | N1.7 only: per-denoising-step multiplier on λ (`all` default, or one weight per step, e.g. `1,1,0,0` / `0,0.5,1,1.5`). Zero-weight steps run vanilla, so this is the **time** coordinate of the locus (§1.2) |
+| `--pladis-nag-tau` / `--pladis-nag-rho` | N1.7 only: NAG magnitude cap and refinement (§1.2.1). Off by default and bit-identical to the pre-NAG path when off; ρ<1 without a τ is rejected (it is the plain arm at `ρ·λ`) |
 | `--model` | `gr00t_n17` (default) or `pi05`; selects the loader **and** the hook |
 
 The same evaluator runs the π0.5 track:
