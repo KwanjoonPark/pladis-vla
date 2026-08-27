@@ -62,7 +62,7 @@ SUITES="libero_10 libero_goal libero_object libero_spatial"
 # The row's arm vocabulary, in run order. A command-line selection only FILTERS
 # this list — it can never introduce an arm — so an unknown name is an abort
 # rather than a driver that quietly runs nothing for days.
-ARMS="allxt-temp20l20 allxt-temp20l15 allxt-temp20"
+ARMS="allxt-temp20l20 allxt-temp20l15 allxt-temp20 allxt-temp20-nagn-l20"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -74,6 +74,12 @@ echo "[noise-temp] arms: $SELECT"
 
 run() { # $1=tag, rest = pladis args; a tag outside $SELECT is skipped
   local tag="$1"; shift
+  # A run line whose tag is not in ARMS can NEVER be selected: with no args
+  # SELECT=ARMS, and explicit args are validated against ARMS above. It would
+  # no-op silently on every invocation while looking wired — which is exactly
+  # what happened on 2026-08-27 to the first launch of allxt-temp20-nagn-l20
+  # (added as a run line, not added to ARMS; the sweep printed ALL DONE in 14 s).
+  case " $ARMS " in *" $tag "*) ;; *) echo "[noise-temp] ABORT: run line for '$tag' but it is missing from ARMS — this arm would silently never run" >&2; exit 2 ;; esac
   case " $SELECT " in *" $tag "*) ;; *) return 0 ;; esac
   for S in $SUITES; do
     local out="results/sweep/n17_noise_${tag}_${S}_eplog.tsv"

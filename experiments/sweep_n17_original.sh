@@ -74,6 +74,10 @@ echo "[orig] arms: $SELECT (episodes/suite=$ORIG_EPISODES)"
 
 run() { # $1=tag, rest = pladis args; a tag outside $SELECT is skipped
   local tag="$1"; shift
+  # A run line whose tag is not in ARMS can never be selected (no-arg SELECT=ARMS,
+  # explicit args validated against ARMS above), so it would no-op silently on
+  # every invocation while looking wired. This bit sweep_n17_noise_temp.sh on 2026-08-27.
+  case " $ARMS " in *" $tag "*) ;; *) echo "[orig] ABORT: run line for '$tag' but it is missing from ARMS — this arm would silently never run" >&2; exit 2 ;; esac
   case " $SELECT " in *" $tag "*) ;; *) return 0 ;; esac
   for S in $SUITES; do
     local out="results/sweep/n17_orig_${tag}_${S}_eplog.tsv"
