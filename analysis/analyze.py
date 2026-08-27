@@ -283,7 +283,15 @@ AXES = {
                                 #   missing plain lambda=3 rung. On machine A these
                                 #   eplogs never exist and the arms stay skipped.
                                 "allxt-temp20l30",
-                                "allxt-temp20-nagn-l15", "allxt-temp20-nagn-l30"]},
+                                "allxt-temp20-nagn-l15", "allxt-temp20-nagn-l30",
+                                # 08-27 condition-② battery (docs/nag.md §2b —
+                                #   refinement has content only with a raised
+                                #   lambda and an ACTIVE cap): plain lambda=4,
+                                #   cap-only at 4, and the published NAG recipe
+                                #   (lambda=4, tau=2.5, rho=0.5 -> lambda_eff=2
+                                #   on uncapped rows).
+                                "allxt-temp20l40",
+                                "allxt-temp20-nagn-l40", "allxt-temp20-nagnr-l40"]},
                  "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -395,6 +403,21 @@ AXES = {
                      ("allxt-temp20-nagn-l15", "allxt-temp20l15"),
                      ("allxt-temp20-nagn-l30", "allxt-temp20l30"),
                      ("allxt-temp20-nagn-l30", "vanilla"),
+                     # 08-27 condition-② battery. The rho reading is the
+                     # nagnr-vs-nagn pair — rho isolated at matched (lambda, tau);
+                     # everything else anchors it: does plain lambda=4 finally
+                     # turn the climbing axis over, does the cap hold there, and
+                     # does the published recipe (overdose+cap+shrink, iso-dose
+                     # with plain lambda=2 on uncapped rows) beat either plain
+                     # lambda=2 or cap-at-2.
+                     ("allxt-temp20l40", "vanilla"),
+                     ("allxt-temp20l40", "allxt-temp20l30"),
+                     ("allxt-temp20-nagn-l40", "allxt-temp20l40"),
+                     ("allxt-temp20-nagn-l40", "allxt-temp20-nagn-l30"),
+                     ("allxt-temp20-nagnr-l40", "allxt-temp20-nagn-l40"),
+                     ("allxt-temp20-nagnr-l40", "allxt-temp20l20"),
+                     ("allxt-temp20-nagnr-l40", "allxt-temp20-nagn-l20"),
+                     ("allxt-temp20-nagnr-l40", "vanilla"),
                  ],
                  # The climbing-side DiD (docs/nag.md §5.1): does the cap flatten
                  # a ladder that is RISING? It should not (that is Failure A) —
