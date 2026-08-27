@@ -96,4 +96,20 @@ run allxt-temp20l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax 
 run allxt-temp20l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
 run allxt-temp20    --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
 
+# 2026-08-28 NAG cap at the shared setting (docs/nag.md §7 Tier 1, the axis's
+# decisive reading). Noise is the big-n FALLING axis: the plain temp ladder peaks
+# at lambda=1.5 (86.76) and gives back -1.81pp by lambda=2 (z=-2.50, the only
+# nominally significant turnover in the campaign). On `original` (the small-n
+# falling axis) the cap at this same setting recovered the whole lambda=2 loss
+# (+2.25 vs its uncapped twin, z=+1.96; regret vs the axis optimum 0.00pp on
+# 9:9 discordants), and on the climbing axes it cost -0.78 (language, n.s.) /
+# -1.23 (robot, n.s.) — so this arm is the confirmation test with real power
+# (n=1601, paired SE ~0.7pp): does lambda=2 + the cap recover to the lambda=1.5
+# level here too? All three comparators (temp20l15 = the axis optimum,
+# temp20l20 = the uncapped twin, vanilla) are collected above.
+# tau=2.5 was selected on THIS axis's own R distribution (diag_nag.py 08-26:
+# clip 0.7% @lambda1 / 4.6% @1.5 / 12.5% @2 / 33.4% @3 — same rule, same pick
+# as the other three axes). COST: ~20 h at this axis's measured 45 s/ep.
+run allxt-temp20-nagn-l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+
 echo "[noise-temp] ALL DONE $(date +%H:%M:%S)"

@@ -276,7 +276,14 @@ AXES = {
                                 #   the shared operating point (lambda=2, tau=2.5,
                                 #   rho=1) on the axis whose ladder CLIMBS — the
                                 #   risk case, where the cap could cost the gain.
-                                "allxt-temp20-nagn-l20"]},
+                                "allxt-temp20-nagn-l20",
+                                # 08-28 the B-server curve (docs/nag.md §7 Tier 3,
+                                #   run self-contained on its own machine per
+                                #   SETUP.md §0): the lambda 1.5/3 pairs plus the
+                                #   missing plain lambda=3 rung. On machine A these
+                                #   eplogs never exist and the arms stay skipped.
+                                "allxt-temp20l30",
+                                "allxt-temp20-nagn-l15", "allxt-temp20-nagn-l30"]},
                  "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -380,7 +387,23 @@ AXES = {
                      # confound is impossible — same locus, same lambda, same branch.
                      ("allxt-temp20-nagn-l20", "allxt-temp20l20"),
                      ("allxt-temp20-nagn-l20", "vanilla"),
+                     # 08-28 B-server curve contrasts: each capped rung vs its
+                     # uncapped twin, the plain lambda=3 rung itself (does the
+                     # climbing axis EVER turn over?), and the top-rung anchors.
+                     ("allxt-temp20l30", "vanilla"),
+                     ("allxt-temp20l30", "allxt-temp20l20"),
+                     ("allxt-temp20-nagn-l15", "allxt-temp20l15"),
+                     ("allxt-temp20-nagn-l30", "allxt-temp20l30"),
+                     ("allxt-temp20-nagn-l30", "vanilla"),
                  ],
+                 # The climbing-side DiD (docs/nag.md §5.1): does the cap flatten
+                 # a ladder that is RISING? It should not (that is Failure A) —
+                 # the lambda 1.5 -> 3 walk should be the same capped and uncapped.
+                 "extra_interactions": {"n17": [
+                     ("allxt-temp20-nagn-l30", "allxt-temp20-nagn-l15",
+                      "allxt-temp20l30", "allxt-temp20l15",
+                      "lambda 1.5->3 step, capped vs uncapped (~0 = no Failure A)"),
+                 ]},
                  "smolvla": [
                      ("axt10", "axi10"),               # locus contrast at 1.0
                      ("axt10", "vanilla"), ("axi10", "vanilla"),
@@ -442,8 +465,20 @@ AXES = {
                              "allxt-temp20", "allxt-temp20l15",
                              "allxt-temp20l20",
                              "allxt-late-l2", "allxt-inc-l2",
-                             "allxt-temp20-late-l2", "allxt-temp20-late-l15"]},
+                             "allxt-temp20-late-l2", "allxt-temp20-late-l15",
+                             # 08-28 NAG cap at the shared setting (docs/nag.md
+                             #   §7 Tier 1): the big-n falling-axis confirmation.
+                             "allxt-temp20-nagn-l20"]},
               "extra_contrasts": {"n17": [
+                  # 2026-08-28 NAG cap (lambda=2, tau=2.5, rho=1). This axis's
+                  # plain ladder peaks at lambda=1.5 and turns over by 2 (-1.81,
+                  # z=-2.50), so the three readings are: vs the uncapped twin
+                  # (the cap alone, no dose confound), vs the AXIS OPTIMUM
+                  # temp20l15 (the regret of the shared setting — the number the
+                  # one-lambda claim is about), and vs vanilla.
+                  ("allxt-temp20-nagn-l20", "allxt-temp20l20"),
+                  ("allxt-temp20-nagn-l20", "allxt-temp20l15"),
+                  ("allxt-temp20-nagn-l20", "vanilla"),
                   # dose ladder at each locus: vs vanilla and vs the rung below
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
