@@ -160,4 +160,18 @@ run allxt-temp20-dec-l2   --pladis-install --pladis-scale 2.0 --pladis-method so
 # against allxt-temp20l20 (same locus, same lambda, no cap — collected).
 run allxt-temp20-nagn-l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 
+# 2026-08-27 the A-side of the cross-machine curve (docs/nag.md §7 Tier 3).
+# Machine B ran the language plateau curve self-contained (its own vanilla and
+# controls, SETUP.md §0); these three arms complete the SAME curve on THIS
+# machine — plain lambda=3 (does the climbing axis ever turn over here too?)
+# and the NAG lambda {1.5, 3} rungs against their uncapped twins. With both
+# machines carrying the full 7-arm curve, every A<->B comparison is a
+# direction-replication read on independent hardware (never a paired stat).
+# The lambda=2 pair (allxt-temp20l20 / allxt-temp20-nagn-l20) is collected
+# above. Analysis contrasts + the climbing-side DiD are already registered
+# (analyze.py, commit 1c979f5). COST: ~5.1 h/arm at the axis's ~12 s/ep.
+run allxt-temp20l30       --pladis-install --pladis-scale 3.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text
+run allxt-temp20-nagn-l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+run allxt-temp20-nagn-l30 --pladis-install --pladis-scale 3.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"
