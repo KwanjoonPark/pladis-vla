@@ -419,14 +419,7 @@ AXES = {
                      ("allxt-temp20-nagnr-l40", "allxt-temp20-nagn-l20"),
                      ("allxt-temp20-nagnr-l40", "vanilla"),
                  ],
-                 # The climbing-side DiD (docs/nag.md §5.1): does the cap flatten
-                 # a ladder that is RISING? It should not (that is Failure A) —
-                 # the lambda 1.5 -> 3 walk should be the same capped and uncapped.
-                 "extra_interactions": {"n17": [
-                     ("allxt-temp20-nagn-l30", "allxt-temp20-nagn-l15",
-                      "allxt-temp20l30", "allxt-temp20l15",
-                      "lambda 1.5->3 step, capped vs uncapped (~0 = no Failure A)"),
-                 ]},
+
                  "smolvla": [
                      ("axt10", "axi10"),               # locus contrast at 1.0
                      ("axt10", "vanilla"), ("axi10", "vanilla"),
@@ -439,7 +432,15 @@ AXES = {
                      # 08-06 low-dose rung: vs vanilla, plus the 0.5 -> 1.0
                      # dose step (higher dose listed first, as in axt/axt10)
                      ("axi05", "vanilla"), ("axi10", "axi05"),
-                 ]}},
+                 ]},
+                 # The climbing-side DiD (docs/nag.md §5.1): does the cap flatten
+                 # a ladder that is RISING? It should not (that is Failure A) —
+                 # the lambda 1.5 -> 3 walk should be the same capped and uncapped.
+                 "extra_interactions": {"n17": [
+                     ("allxt-temp20-nagn-l30", "allxt-temp20-nagn-l15",
+                      "allxt-temp20l30", "allxt-temp20l15",
+                      "lambda 1.5->3 step, capped vs uncapped (~0 = no Failure A)"),
+                 ]},},
     # noise: obs-side corruption of the agentview stream. The per-family
     # breakdown is the point of the axis — the five differ in KIND, not just
     # strength (motion/glass smear geometry, gauss/zoom soften it, fog is a
