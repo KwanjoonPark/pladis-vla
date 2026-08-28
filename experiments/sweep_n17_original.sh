@@ -62,7 +62,7 @@ ARMS="vanilla base0 actionximage actionxtext statextext stateximage allxall \
 allxt-temp20l20 allxt-temp20l15 allxt-temp20 \
 allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 \
 allxt-temp20l30 allxt-temp20-nagn-l10 allxt-temp20-nagn-l15 \
-allxt-temp20-nagn-l20 allxt-temp20-nagn-l30"
+allxt-temp20-nagn-l20 allxt-temp20-nagn-l30 allxtext"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -198,5 +198,14 @@ run allxt-temp20-nagn-l10 --pladis-install --pladis-scale 1.0 --pladis-method so
 run allxt-temp20-nagn-l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 run allxt-temp20-nagn-l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 run allxt-temp20-nagn-l30 --pladis-install --pladis-scale 3.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+
+# 2026-08-28 (operator request) all-x-text at lambda=1 on the ENTMAX branch — the
+# one rung this axis's in-dist table was missing. It completes two readings that
+# every perturbation axis already has: the branch swap at matched locus and dose
+# (vs allxt-temp20, softmax beta=2 at lambda=1: "are entmax's exact zeros special"
+# read in-distribution), and the entmax dose step 1 -> 2 on this locus (vs
+# allxtext20). Paired with allxt-temp20-late-l2 (wired 08-21, never run) in the
+# same launch, so the axis's table closes at once. COST: ~1.3 h each at 400 eps.
+run allxtext --pladis-install --pladis-scale 1.0 --pladis-qgroup all --pladis-kind text
 
 echo "[orig] ALL DONE $(date +%H:%M:%S)"

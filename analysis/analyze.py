@@ -742,7 +742,9 @@ AXES = {
                                 #   plain lambda=3 rung plus the four capped ones.
                                 "allxt-temp20l30",
                                 "allxt-temp20-nagn-l10", "allxt-temp20-nagn-l15",
-                                "allxt-temp20-nagn-l20", "allxt-temp20-nagn-l30"]},
+                                "allxt-temp20-nagn-l20", "allxt-temp20-nagn-l30",
+                                # 08-28 the missing entmax lambda=1 all-x-text rung
+                                "allxtext"]},
                  "extra_contrasts": {"n17": [
                      # the 07-16 lambda=1 modality grid, each vs vanilla, plus
                      # the locus contrast that carries the story on language
@@ -792,6 +794,16 @@ AXES = {
                      ("allxt-temp20-nagn-l20", "allxt-temp20"),   # regret vs the axis optimum
                      ("allxt-temp20-nagn-l30", "allxt-temp20"),
                      ("allxt-temp20-nagn-l20", "vanilla"),
+                     # 2026-08-28 allxtext (entmax, lambda=1, all-x-text): vs vanilla;
+                     # the in-dist branch swap at matched locus+dose (vs allxt-temp20,
+                     # the softmax beta=2 twin — on the perturbation axes the two
+                     # branches agreed, "zeros not special"); the query-group step
+                     # from action-x-text at the same branch and dose; and the entmax
+                     # dose step 1 -> 2 on this locus.
+                     ("allxtext", "vanilla"),
+                     ("allxtext", "allxt-temp20"),
+                     ("allxtext", "actionxtext"),
+                     ("allxtext20", "allxtext"),
                  ]},
                  # The plateau itself: does the cap shrink the walk from this axis's
                  # optimum (lambda=1) to the shared setting (lambda=2), and to 3?
