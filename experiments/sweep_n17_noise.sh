@@ -75,7 +75,7 @@ SUITES="libero_10 libero_goal libero_object libero_spatial"
 # this list — it can never introduce an arm — so an unknown name is an abort
 # rather than a driver that quietly runs nothing for four days.
 ARMS="vanilla actionxtext actionxtext15 actionxtext20 allxtext allxtext15 allxtext20 \
-allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 allxt-temp20-late-l15"
+allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 allxt-temp20-late-l15 allxt-late-l15"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -196,5 +196,15 @@ run allxt-temp20-late-l2 --pladis-install --pladis-scale 2.0 --pladis-method sof
 # than as a place a signal is expected. Its own one-arm driver:
 #   nohup bash experiments/sweep_n17_noise.sh allxt-temp20-late-l15 > results/sweep/driver_noise_late_temp_l15.out 2>&1 &
 run allxt-temp20-late-l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
+
+# 2026-08-29 (operator request) the ENTMAX counterpart of the 08-23 lambda=1.5
+# late rung above. This axis's plain optimum is lambda=1.5, so the late shape
+# [0,0,1.5,1.5] here sits at the dose the axis actually wants; the sharp-softmax
+# twin allxt-temp20-late-l15 is collected, which makes this the branch swap at
+# matched shape AND matched dose (zeros-not-special on the time axis, at the
+# axis optimum rather than at lambda=2). Also read vs its flat parent allxtext15
+# (same peak lambda, twice the time-integrated dose) and vs allxt-late-l2 (the
+# dose step within the entmax late shape). COST: ~20 h at 45 s/ep x 1,601.
+run allxt-late-l15 --pladis-install --pladis-scale 1.5 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
 
 echo "[noise] ALL DONE $(date +%H:%M:%S)"

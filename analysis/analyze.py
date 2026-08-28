@@ -490,6 +490,8 @@ AXES = {
                              "allxt-temp20l20",
                              "allxt-late-l2", "allxt-inc-l2",
                              "allxt-temp20-late-l2", "allxt-temp20-late-l15",
+                             # 08-29 entmax late at lambda=1.5 (this axis's optimum)
+                             "allxt-late-l15",
                              # 08-28 NAG cap at the shared setting (docs/nag.md
                              #   §7 Tier 1): the big-n falling-axis confirmation.
                              "allxt-temp20-nagn-l20"]},
@@ -503,6 +505,16 @@ AXES = {
                   ("allxt-temp20-nagn-l20", "allxt-temp20l20"),
                   ("allxt-temp20-nagn-l20", "allxt-temp20l15"),
                   ("allxt-temp20-nagn-l20", "vanilla"),
+                  # 2026-08-29 entmax late [0,0,1.5,1.5]: vs vanilla; the branch
+                  # swap at matched shape+dose (vs allxt-temp20-late-l15 — on
+                  # language the two branches agreed at lambda=2, this asks at the
+                  # axis's own optimum); vs the flat parent allxtext15 (same peak
+                  # lambda, twice the summed dose); vs allxt-late-l2 (dose step
+                  # inside the entmax late shape).
+                  ("allxt-late-l15", "vanilla"),
+                  ("allxt-late-l15", "allxt-temp20-late-l15"),
+                  ("allxt-late-l15", "allxtext15"),
+                  ("allxt-late-l2", "allxt-late-l15"),
                   # dose ladder at each locus: vs vanilla and vs the rung below
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
