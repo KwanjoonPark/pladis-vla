@@ -164,6 +164,13 @@ def parse_args():
                         "(1-rho)*Z_dense. Requires --pladis-nag-tau: with no cap it "
                         "only rescales the dose to rho*scale (docs/nag.md 2b), which "
                         "the lambda ladder has already run. Default 1 = no refinement")
+    p.add_argument("--pladis-nag-probe", action="store_true",
+                   help="gr00t_n17 only: record the NAG ratio R per episode WITHOUT a "
+                        "cap (bit-identical rollout, verify_nag.py gate A). Writes "
+                        "<out>.rstats.tsv (per episode) and <out>.rstats_sb.tsv (per "
+                        "denoising step x block). Any --pladis-nag-tau arm records the "
+                        "same files automatically (pre-cap R). Mutually exclusive with "
+                        "--pladis-nag-tau; needs --pladis-install and scale > 0")
     # pi0.5 key-axis geometry: [image(0:ni) | language(ni:ni+nl) | suffix]. Defaults are
     # the real pi05_libero layout — 3 image slots x 256 + max_token_len 200 = 968 prefix,
     # suffix = action_horizon 10. Re-validated against the live key_len at run time
@@ -229,7 +236,7 @@ def parse_args():
                 "pi05 kinds are text|image|prefix|all (attn_pi05 rejects the rest "
                 "only AFTER the model load)."
             )
-        if args.pladis_nag_tau is not None or args.pladis_nag_rho != 1.0:
+        if args.pladis_nag_tau is not None or args.pladis_nag_rho != 1.0 or args.pladis_nag_probe:
             raise SystemExit(_NAG_TRACK_MSG)
         if args.pladis_qgroup != "all":
             raise SystemExit(
@@ -279,6 +286,17 @@ def parse_args():
                     "[arm] --pladis-nag-* without --pladis-install: a cap with no hook "
                     "is a vanilla arm wearing an intervention's name."
                 )
+        if args.pladis_nag_probe:
+            if args.pladis_nag_tau is not None:
+                raise SystemExit(
+                    "[arm] --pladis-nag-probe is the cap-OFF measurement; a --pladis-nag-tau "
+                    "arm records the same R files by itself. Pass one or the other."
+                )
+            if not args.pladis_install or args.pladis_scale == 0.0:
+                raise SystemExit(
+                    "[arm] --pladis-nag-probe needs --pladis-install with scale > 0: at "
+                    "lambda=0 the blend is dense and R == 1 by construction."
+                )
         if args.pladis_kind not in ("all", "text", "image"):
             raise SystemExit(
                 "[arm] gr00t_n17 selects whole cross blocks: --pladis-kind all|text|"
@@ -292,7 +310,7 @@ def parse_args():
             raise SystemExit("[arm] --pladis-cells is gr00t_n17-only (per-kind qgroups).")
         if args.pladis_schedule != "all":
             raise SystemExit(_SCHEDULE_TRACK_MSG)
-        if args.pladis_nag_tau is not None or args.pladis_nag_rho != 1.0:
+        if args.pladis_nag_tau is not None or args.pladis_nag_rho != 1.0 or args.pladis_nag_probe:
             raise SystemExit(_NAG_TRACK_MSG)
         if args.pladis_qgroup == "state":
             raise SystemExit(
@@ -428,6 +446,56 @@ def _assert_smolvla_delivery(sess, ts, first_spec, model) -> None:
           f"forward(s), prefix_len={CFG.prefix_len}", flush=True)
 
 
+class _RStatsWriter:
+    """Per-episode NAG ratio statistics, as two TSV sidecars of the eplog.
+
+    ``<out>.rstats.tsv``    one row per episode: outcome + mean/max/quantiles of R,
+                            P(R > t) for the diagnostic grid, the cap's clip rate.
+    ``<out>.rstats_sb.tsv`` one row per (episode, denoising step, block).
+
+    Keyed by episode so analysis joins them to the eplog; the eplog schema itself
+    is untouched (harness/eplog.py asserts it on resume, so a new column there
+    would break every existing eplog).
+    """
+
+    def __init__(self, out: str, thresholds) -> None:
+        self.thr = thresholds
+        self.cols = (["episode", "success_once", "n_slots", "mean_R", "max_R",
+                      "p50_R", "p90_R", "p99_R"]
+                     + [f"frac_gt_{t:g}" for t in thresholds] + ["clip_rate"])
+        self.cols_sb = ["episode", "success_once", "step", "block", "n_slots", "mean_R",
+                        "max_R", "frac_gt_2", "frac_gt_3", "frac_gt_5", "clip_rate"]
+        self.f = self._open(out + ".rstats.tsv", self.cols)
+        self.f_sb = self._open(out + ".rstats_sb.tsv", self.cols_sb)
+
+    @staticmethod
+    def _open(path, cols):
+        fresh = not os.path.exists(path) or os.path.getsize(path) == 0
+        f = open(path, "a")
+        if fresh:
+            f.write("\t".join(cols) + "\n")
+            f.flush()
+        return f
+
+    def write(self, episode: int, success: int, summary: dict, rows: list) -> None:
+        if not summary:
+            raise RuntimeError(
+                f"episode {episode}: no NAG ratio was recorded — the census never saw "
+                f"an attention call, so the rollout did not go through the hook."
+            )
+        vals = {"episode": episode, "success_once": success, **summary}
+        self.f.write("\t".join(_fmt(vals[c]) for c in self.cols) + "\n")
+        for row in rows:
+            v = {"episode": episode, "success_once": success, **row}
+            self.f_sb.write("\t".join(_fmt(v[c]) for c in self.cols_sb) + "\n")
+        self.f.flush()
+        self.f_sb.flush()
+
+
+def _fmt(v) -> str:
+    return f"{v:.6g}" if isinstance(v, float) else str(v)
+
+
 def _assert_n17_delivery(sess, ts, first_spec, model, *, schedule: bool, nag: bool) -> None:
     """gr00t_n17 counterpart of the pi05/smolvla warm-ups: prove the run-time-enforced
     parts of the arm actually fire, BEFORE logging an episode.
@@ -522,10 +590,15 @@ def main():
             steps_clause = f",sched{fmt_schedule(parse_schedule(args.pladis_schedule))}"
         # Same append-only discipline as steps_clause: NAG postdates every eplog on
         # this track, so an arm without it must keep a byte-identical signature.
-        if args.pladis_nag_tau is None:
-            nag_clause = ""
-        else:
+        if args.pladis_nag_tau is not None:
             nag_clause = f",nagt{args.pladis_nag_tau:g},nagr{args.pladis_nag_rho:g}"
+        elif args.pladis_nag_probe:
+            # Numerically the plain arm (gate A), but a DIFFERENT ledger on purpose:
+            # under the plain arm's signature a collected arm resumes as a no-op
+            # and no R would ever be written. Use a separate --out for probes.
+            nag_clause = ",nagprobe"
+        else:
+            nag_clause = ""
         pladis_clause = (
             f"pladis=scale{args.pladis_scale:g},{args.pladis_method},"
             f"b{args.pladis_beta:g},"
@@ -614,6 +687,13 @@ def main():
         )
     elif args.pladis_install:
         hooks = resolve_hooks(spec)
+        if args.pladis_nag_probe or args.pladis_nag_tau is not None:
+            # Armed BEFORE install: install_pladis reads NAG.probe to decide whether
+            # the step probe (which the census keys on) has to be published.
+            from pladis.attn_gr00t_n17 import NAG
+
+            NAG.record_episode = True
+            NAG.probe = bool(args.pladis_nag_probe)
         if args.pladis_cells:
             install_cells = getattr(hooks, "install_pladis_cells", None)
             if install_cells is None:
@@ -669,6 +749,8 @@ def main():
         arm_tag += f" sched {args.pladis_schedule}"
     if args.pladis_install and args.pladis_nag_tau is not None:
         arm_tag += f" nag t={args.pladis_nag_tau:g} r={args.pladis_nag_rho:g}"
+    elif args.pladis_install and args.pladis_nag_probe:
+        arm_tag += " nag probe"
     video_label = f"{model_tag} | {arm_tag}"
 
     from harness.env import RUNTIME_RNG_AXES
@@ -689,6 +771,18 @@ def main():
         (lambda spec: _task_meta_instruction(spec.base_task))
         if args.instruction_source == "task-meta" else None
     )
+
+    rstats = None
+    if args.model == "gr00t_n17" and args.pladis_install and (
+        args.pladis_nag_probe or args.pladis_nag_tau is not None
+    ):
+        from pladis.attn_gr00t_n17 import NAG, R_THRESHOLDS
+
+        # Two sidecars next to the eplog, appended per episode AFTER the eplog row
+        # so the eplog stays the resume ledger (a crash in between costs one
+        # episode's R, never a duplicated row). Header written only on a fresh file.
+        rstats = _RStatsWriter(args.out, R_THRESHOLDS)
+        NAG.clear_episode()  # the delivery warm-up's census is not an episode
 
     t0, n_succ, n_run = time.time(), 0, 0
     for spec in todo:
@@ -711,6 +805,12 @@ def main():
             instruction_map=instruction_map,
         )
         log.log(r)
+        if rstats is not None:
+            from pladis.attn_gr00t_n17 import NAG
+
+            summary, rows = NAG.episode_stats()
+            rstats.write(r.episode, r.success_once, summary, rows)
+            NAG.clear_episode()
         n_run += 1
         n_succ += r.success_once
         if n_run % 10 == 0:

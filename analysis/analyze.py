@@ -757,7 +757,10 @@ AXES = {
                                 "allxt-temp20-nagn-l10", "allxt-temp20-nagn-l15",
                                 "allxt-temp20-nagn-l20", "allxt-temp20-nagn-l30",
                                 # 08-28 the missing entmax lambda=1 all-x-text rung
-                                "allxtext"]},
+                                "allxtext",
+                                # 08-30 ratio-diagnostic re-runs (R recorded per episode)
+                                "allxt-temp20-r", "allxt-temp20l20-r",
+                                "allxt-temp20-nagn-l20-r"]},
                  "extra_contrasts": {"n17": [
                      # the 07-16 lambda=1 modality grid, each vs vanilla, plus
                      # the locus contrast that carries the story on language
@@ -817,6 +820,12 @@ AXES = {
                      ("allxtext", "allxt-temp20"),
                      ("allxtext", "actionxtext"),
                      ("allxtext20", "allxtext"),
+                     # 2026-08-30 each R-recorded re-run vs its parent: the probe path
+                     # is bit-identical to the plain arm, so these should read 0:0 —
+                     # any discordance is a same-machine reproducibility measurement.
+                     ("allxt-temp20-r", "allxt-temp20"),
+                     ("allxt-temp20l20-r", "allxt-temp20l20"),
+                     ("allxt-temp20-nagn-l20-r", "allxt-temp20-nagn-l20"),
                  ]},
                  # The plateau itself: does the cap shrink the walk from this axis's
                  # optimum (lambda=1) to the shared setting (lambda=2), and to 3?
@@ -860,6 +869,113 @@ def arm_hosts(prefix, arm):
                 hosts |= {toks[i + 1] for i, t in enumerate(toks)
                           if t == "host" and i + 1 < len(toks)}
     return hosts
+
+
+def load_rstats(prefix, arm):
+    """Per-episode NAG ratio rows for an arm, keyed (suite, episode); {} if none.
+
+    Written by eval_arm next to the eplog (`<out>.rstats.tsv`) for every arm that
+    ran the NAG code path — a --pladis-nag-tau arm (pre-cap R) or a
+    --pladis-nag-probe re-run of a plain arm (bit-identical rollout, R recorded).
+    Missing files are normal: everything collected before 2026-08-30 has none.
+    """
+    rows = {}
+    for s_ in SUITES:
+        p = SWEEP / f"{prefix}_{arm}_{s_}_eplog.tsv.rstats.tsv"
+        if not p.exists():
+            continue
+        for r in csv.DictReader(open(p), delimiter="\t"):
+            rows[(s_, int(r["episode"]))] = {k: float(v) for k, v in r.items()}
+    return rows
+
+
+def load_rstats_sb(prefix, arm):
+    """Per (episode, step, block) rows, pooled over suites; [] if none."""
+    out = []
+    for s_ in SUITES:
+        p = SWEEP / f"{prefix}_{arm}_{s_}_eplog.tsv.rstats_sb.tsv"
+        if not p.exists():
+            continue
+        out += [{k: float(v) for k, v in r.items()} for r in csv.DictReader(open(p), delimiter="\t")]
+    return out
+
+
+def _mean_se(xs):
+    n = len(xs)
+    if n < 2:
+        return (xs[0] if xs else float("nan")), float("nan")
+    m = sum(xs) / n
+    var = sum((x - m) ** 2 for x in xs) / (n - 1)
+    return m, math.sqrt(var / n)
+
+
+def rstats_section(prefix, arms, data):
+    """The ratio diagnostic (2026-08-30): is harm carried by extreme R?
+
+    For every arm with rstats sidecars: the pooled distribution of the per-episode
+    summaries, then the SAME statistics split by outcome — the reading the
+    run-level census cannot give. A failing arm whose failed episodes sit at
+    R = 3-10 while its successes do not says the harm is unconstrained
+    extrapolation, not sparsity; a flat split says the cap is not acting on the
+    rows that decide the episode. Welch z on the outcome split (episodes are
+    independent draws within an arm).
+    """
+    have = {a: load_rstats(prefix, a) for a in arms}
+    have = {a: r for a, r in have.items() if r}
+    if not have:
+        return
+    print("\n== NAG ratio diagnostic: R = ||Z_PL||_1 / ||Z_d||_1 per (head, query row), "
+          "per-episode summaries pooled ==")
+    print(f"  {'arm':22s} {'eps':>5s} {'mean R':>7s} {'max R':>6s} {'P>1.5':>6s} {'P>2':>6s} "
+          f"{'P>3':>6s} {'P>5':>6s} {'P>10':>6s} {'clip':>6s}")
+    for a, rows in have.items():
+        vals = list(rows.values())
+        n = len(vals)
+        mean = lambda k: sum(v[k] for v in vals) / n
+        clip = [v["clip_rate"] for v in vals if v["clip_rate"] == v["clip_rate"]]
+        clip_s = f"{sum(clip) / len(clip):6.1%}" if clip else "   off"
+        print(f"  {a:22s} {n:5d} {mean('mean_R'):7.3f} {max(v['max_R'] for v in vals):6.1f} "
+              f"{mean('frac_gt_1.5'):6.1%} {mean('frac_gt_2'):6.1%} {mean('frac_gt_3'):6.1%} "
+              f"{mean('frac_gt_5'):6.2%} {mean('frac_gt_10'):6.2%} {clip_s}")
+
+    print("\n  -- by outcome (success vs fail), per arm: mean R and P(R > 3) --")
+    for a, rows in have.items():
+        succ = [v for v in rows.values() if v["success_once"] == 1]
+        fail = [v for v in rows.values() if v["success_once"] == 0]
+        if len(succ) < 2 or len(fail) < 2:
+            print(f"  {a:22s} outcome split not available ({len(succ)} succ / {len(fail)} fail)")
+            continue
+        for key, label in (("mean_R", "mean R"), ("frac_gt_3", "P(R>3)"), ("max_R", "max R")):
+            ms, ses = _mean_se([v[key] for v in succ])
+            mf, sef = _mean_se([v[key] for v in fail])
+            se = math.sqrt(ses ** 2 + sef ** 2)
+            z = (mf - ms) / se if se else 0.0
+            print(f"  {a:22s} {label:7s} succ {ms:7.4f} (n={len(succ)})  fail {mf:7.4f} (n={len(fail)})"
+                  f"  fail-succ {mf - ms:+.4f}  z={z:+5.2f}")
+
+    # same-episode comparison across arms that BOTH carry rstats (paired by episode)
+    pairs = [(a, b) for i, a in enumerate(have) for b in list(have)[i + 1:]]
+    for a, b in pairs:
+        ks = sorted(set(have[a]) & set(have[b]))
+        if len(ks) < 2:
+            continue
+        d = [have[a][k]["mean_R"] - have[b][k]["mean_R"] for k in ks]
+        m, se = _mean_se(d)
+        print(f"  paired mean R  {a} - {b}: {m:+.4f} +/- {se:.4f}  n={len(ks)}")
+
+    print("\n  -- by denoising step and by block (pooled over episodes): mean R / P(R > 3) --")
+    for a in have:
+        sb = load_rstats_sb(prefix, a)
+        if not sb:
+            continue
+        by_step, by_block = defaultdict(list), defaultdict(list)
+        for r in sb:
+            by_step[int(r["step"])].append(r)
+            by_block[int(r["block"])].append(r)
+        fmt = lambda rs: f"{sum(r['mean_R'] for r in rs) / len(rs):.3f}/{sum(r['frac_gt_3'] for r in rs) / len(rs):.1%}"
+        print(f"  {a}:")
+        print("     step  " + "  ".join(f"{k}: {fmt(v)}" for k, v in sorted(by_step.items())))
+        print("     block " + "  ".join(f"{k}: {fmt(v)}" for k, v in sorted(by_block.items())))
 
 
 def load(prefix, arm):
@@ -1078,6 +1194,8 @@ def main():
                 d = sr(a, ks) - sr(b, ks)
                 print(f"    {c:13s} {d:+6.2f}pp  disc {n01:3d}:{n10:3d}"
                       f"  z={z:+5.2f}  p={p:.4g}")
+
+    rstats_section(prefix, arms, data)
 
     # Severity needs the axis=none reference sweep of the SAME model. Guarded rather than
     # assumed: without the guard a missing file makes the whole analysis unusable until

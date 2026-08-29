@@ -62,7 +62,8 @@ ARMS="vanilla base0 actionximage actionxtext statextext stateximage allxall \
 allxt-temp20l20 allxt-temp20l15 allxt-temp20 \
 allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 \
 allxt-temp20l30 allxt-temp20-nagn-l10 allxt-temp20-nagn-l15 \
-allxt-temp20-nagn-l20 allxt-temp20-nagn-l30 allxtext"
+allxt-temp20-nagn-l20 allxt-temp20-nagn-l30 allxtext \
+allxt-temp20-r allxt-temp20l20-r allxt-temp20-nagn-l20-r"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -207,5 +208,23 @@ run allxt-temp20-nagn-l30 --pladis-install --pladis-scale 3.0 --pladis-method so
 # allxtext20). Paired with allxt-temp20-late-l2 (wired 08-21, never run) in the
 # same launch, so the axis's table closes at once. COST: ~1.3 h each at 400 eps.
 run allxtext --pladis-install --pladis-scale 1.0 --pladis-qgroup all --pladis-kind text
+
+# 2026-08-30 the RATIO DIAGNOSTIC (professor's request): re-run three collected
+# arms with the per-episode R census on, so R can be joined to each episode's
+# outcome — "do the episodes an arm loses carry extreme R (3, 5, 10x the dense
+# magnitude)?" is the reading that separates unconstrained extrapolation from
+# sparsity as the cause of harm, and the run-level census (diag_nag.py) cannot
+# give it. `-r` = same arm, R recorded:
+#   allxt-temp20-r          plain lambda=1 (this axis's optimum)  --pladis-nag-probe
+#   allxt-temp20l20-r       plain lambda=2 (loses -2.25pp here)   --pladis-nag-probe
+#   allxt-temp20-nagn-l20-r NAG lambda=2 (recovers), pre-cap R    recorded automatically
+# The probe path is bit-identical to the plain arm (verify_nag.py gate A/I), so
+# each -r eplog should REPRODUCE its parent row for row: analyze.py contrasts the
+# pair and a non-zero discordant count is a same-machine reproducibility finding
+# in its own right (base0-vs-vanilla read 44:63 on language, so it is possible).
+# COST: ~1.3 h each at 400 eps; the census adds no measurable per-episode time.
+run allxt-temp20-r          --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
+run allxt-temp20l20-r       --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
+run allxt-temp20-nagn-l20-r --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 
 echo "[orig] ALL DONE $(date +%H:%M:%S)"

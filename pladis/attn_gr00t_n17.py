@@ -208,6 +208,14 @@ _NAG_EPS = 1e-6
 # rate of all of them — the selection rule is then read off, not re-measured.
 NAG_CANDIDATE_TAUS = (1.0, 1.1, 1.25, 1.5, 2.0, 2.5)
 
+# The DIAGNOSTIC grid (2026-08-30, professor's request): how often does the
+# blend push a query row's output to 1.5x, 2x, ... 10x the dense branch's L1
+# magnitude? An arm that hurts while its rows sit at R=3-10 says the harm is
+# unconstrained extrapolation, not sparsity — which is the claim the cap tests.
+# The census counts exceedances on the union of both grids in one pass.
+R_THRESHOLDS = (1.5, 2.0, 2.5, 3.0, 5.0, 10.0)
+_EXCEED_GRID = tuple(sorted(set(NAG_CANDIDATE_TAUS) | set(R_THRESHOLDS)))
+
 
 class _NagCensus:
     """Per-inference census of the L1 ratio R and of the cap that acts on it.
@@ -226,6 +234,12 @@ class _NagCensus:
         self.tau: Optional[float] = None  # None = cap off (probe may still record)
         self.rho: float = 1.0
         self.probe: bool = False  # record R even with the cap off (diag_nag.py)
+        # Per-EPISODE R statistics (eval_arm --pladis-nag-probe / any tau arm):
+        # record the arm's own-lambda R into the probe ledger regardless of tau, so
+        # eval_arm can snapshot it after each episode next to that episode's
+        # outcome. That join is what "do failing episodes carry extreme R" needs
+        # and what the run-level census (diag_nag.py) cannot give.
+        self.record_episode: bool = False
         # Extra lambdas to evaluate R at, from the SAME dense/sparse pair the arm
         # computed: R(l) = ||Z_d + (l/lam)*(Z_PL - Z_d)||_1 / ||Z_d||_1. That is what
         # lets one rollout price every rung of the dose ladder on ONE trajectory,
@@ -239,8 +253,13 @@ class _NagCensus:
         self.p_n: dict = {}
         self.p_sum: dict = {}
         self.p_max: dict = {}
-        self.p_exceed: dict = {}  # key -> per-candidate-tau exceedance counts
+        self.p_exceed: dict = {}  # key -> exceedance counts over _EXCEED_GRID
         self.p_hist: dict = {}  # key -> histogram of R
+
+    def clear_episode(self) -> None:
+        """Drop both ledgers, keep the arm settings (tau/rho/probe flags)."""
+        self.n, self.n_clipped, self.r_max = {}, {}, {}
+        self.p_n, self.p_sum, self.p_max, self.p_exceed, self.p_hist = {}, {}, {}, {}, {}
 
     # 0..8 in 0.05 steps; every candidate tau lands ON an edge. The top matters:
     # the first measurement (language/libero_10) put p90 at 2.65 and the max at 12.4
@@ -275,13 +294,75 @@ class _NagCensus:
         self.p_n[key] = self.p_n.get(key, 0) + r.numel()
         self.p_sum[key] = self.p_sum.get(key, 0.0) + float(r.sum())
         self.p_max[key] = max(self.p_max.get(key, 0.0), float(r.max()))
-        ex = self.p_exceed.setdefault(key, [0] * len(NAG_CANDIDATE_TAUS))
-        for i, t in enumerate(NAG_CANDIDATE_TAUS):
-            ex[i] += int((r > t).sum())
+        ex = self.p_exceed.setdefault(key, [0] * len(_EXCEED_GRID))
+        # one sync for all thresholds instead of one per threshold
+        counts = (r.unsqueeze(0) > r.new_tensor(_EXCEED_GRID).unsqueeze(1)).sum(dim=1).tolist()
+        for i, c in enumerate(counts):
+            ex[i] += int(c)
         h = torch.histc(r.clamp(max=self._HIST_HI), bins=self._HIST_BINS,
                         min=0.0, max=self._HIST_HI).cpu()
         prev = self.p_hist.get(key)
         self.p_hist[key] = h if prev is None else prev + h
+
+    def exceed(self, key, threshold: float) -> int:
+        """Slots with R > threshold in one probe cell (threshold must be on the grid)."""
+        return self.p_exceed[key][_EXCEED_GRID.index(threshold)]
+
+    @classmethod
+    def quantiles(cls, hist: torch.Tensor, qs=(0.5, 0.9, 0.99)) -> dict:
+        """Quantiles read off a census histogram; values past its top clamp to it."""
+        total = float(hist.sum())
+        if total == 0:
+            return {q: float("nan") for q in qs}
+        edge, cum, out = cls._HIST_HI / len(hist), 0.0, {}
+        it, want = iter(sorted(qs)), None
+        want = next(it, None)
+        for i, c in enumerate(hist.tolist()):
+            cum += c
+            while want is not None and cum / total >= want:
+                out[want] = (i + 1) * edge
+                want = next(it, None)
+        for q in qs:
+            out.setdefault(q, cls._HIST_HI)
+        return out
+
+    def episode_stats(self) -> tuple:
+        """Summarize the probe ledger for ONE episode: (summary dict, per-(step, block) rows).
+
+        The summary carries the diagnostic the professor asked for — mean R, max R,
+        P(R > t) for t in R_THRESHOLDS, quantiles, and the cap's clip rate when a tau
+        is armed. The rows carry the same per (denoising step, block), which is where
+        the run-level census found the structure (flat in step, steep in block).
+        Aggregation is over query rows AND heads; qgroup/lambda are fixed per arm.
+        """
+        keys = sorted(self.p_n)
+        if not keys:
+            return {}, []
+        n = sum(self.p_n[k] for k in keys)
+        hist = sum((self.p_hist[k] for k in keys[1:]), self.p_hist[keys[0]].clone())
+        q = self.quantiles(hist)
+        summary = {
+            "n_slots": n,
+            "mean_R": sum(self.p_sum[k] for k in keys) / n,
+            "max_R": max(self.p_max[k] for k in keys),
+            "p50_R": q[0.5], "p90_R": q[0.9], "p99_R": q[0.99],
+        }
+        for t in R_THRESHOLDS:
+            summary[f"frac_gt_{t:g}"] = sum(self.exceed(k, t) for k in keys) / n
+        n_cap = sum(self.n.values())
+        summary["clip_rate"] = (sum(self.n_clipped.values()) / n_cap) if n_cap else float("nan")
+        rows = []
+        for k in keys:
+            step, block = k[0], k[1]
+            nk = self.p_n[k]
+            row = {"step": step, "block": block, "n_slots": nk,
+                   "mean_R": self.p_sum[k] / nk, "max_R": self.p_max[k]}
+            for t in (2.0, 3.0, 5.0):
+                row[f"frac_gt_{t:g}"] = self.exceed(k, t) / nk
+            ck = k[:3]
+            row["clip_rate"] = (self.n_clipped.get(ck, 0) / self.n[ck]) if self.n.get(ck) else float("nan")
+            rows.append(row)
+        return summary, rows
 
     @property
     def clip_rate(self) -> float:
@@ -410,11 +491,11 @@ class PLADISAttnProcessor:
         den = z_dense.float().abs().sum(dim=-1, keepdim=True)
         ratio = num / (den + _NAG_EPS)
         key = (step, self.block_idx, self.qgroup)
-        if NAG.probe:
+        if NAG.probe or NAG.record_episode:
             NAG.record_probe(key + (lam,), ratio)
             # Every other rung of the ladder, from the same two features: the blend
             # is affine in lambda, so Z(l) = Z_d + (l/lam)*(Z_PL - Z_d) exactly.
-            if NAG.probe_scales:
+            if NAG.probe and NAG.probe_scales:
                 delta = z_blend.float() - z_dense.float()
                 for other in NAG.probe_scales:
                     if other == lam:

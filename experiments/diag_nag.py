@@ -85,22 +85,7 @@ def parse_args():
 
 
 def _quantiles(hist, qs=(0.5, 0.9, 0.99)):
-    """Read quantiles off the census histogram; values above its top clamp to it."""
-    hi = NAG._HIST_HI
-    total = float(hist.sum())
-    if total == 0:
-        return {q: float("nan") for q in qs}
-    cum, out, edge = 0.0, {}, hi / len(hist)
-    it = iter(sorted(qs))
-    want = next(it, None)
-    for i, c in enumerate(hist.tolist()):
-        cum += c
-        while want is not None and cum / total >= want:
-            out[want] = (i + 1) * edge
-            want = next(it, None)
-    for q in qs:
-        out.setdefault(q, hi)  # saturated: the true quantile is >= the top bin
-    return out
+    return NAG.quantiles(hist, qs)  # one implementation, owned by the census
 
 
 def _agg(keys, field):
@@ -126,7 +111,7 @@ def report(args) -> None:
         mx = max(NAG.p_max[k] for k in keys)
         hist = sum((NAG.p_hist[k] for k in keys[1:]), NAG.p_hist[keys[0]].clone())
         q = _quantiles(hist)
-        ex = [sum(NAG.p_exceed[k][i] for k in keys) / n for i in range(len(NAG_CANDIDATE_TAUS))]
+        ex = [sum(NAG.exceed(k, t) for k in keys) / n for t in NAG_CANDIDATE_TAUS]
         rates[lam] = ex
         print(f"  {lam:6.2f} | {n:7d} | {mean:6.3f} | "
               f"{q[0.5]:5.2f} {q[0.9]:5.2f} {q[0.99]:5.2f} {mx:5.2f} | "
@@ -137,7 +122,7 @@ def report(args) -> None:
         for step in sorted({k[0] for k in NAG.p_n if k[3] == lam}):
             keys = [k for k in NAG.p_n if k[3] == lam and k[0] == step]
             n = _agg(keys, NAG.p_n)
-            ex = [sum(NAG.p_exceed[k][i] for k in keys) / n for i in range(len(NAG_CANDIDATE_TAUS))]
+            ex = [sum(NAG.exceed(k, t) for k in keys) / n for t in NAG_CANDIDATE_TAUS]
             print(f"  lambda {lam:4.2f} step {step} | mean R "
                   f"{_agg(keys, NAG.p_sum) / n:6.3f} | "
                   + "  ".join(f"t={t:g}:{r:5.1%}" for t, r in zip(NAG_CANDIDATE_TAUS, ex)))
@@ -147,7 +132,7 @@ def report(args) -> None:
         for blk in sorted({k[1] for k in NAG.p_n if k[3] == lam}):
             keys = [k for k in NAG.p_n if k[3] == lam and k[1] == blk]
             n = _agg(keys, NAG.p_n)
-            ex = [sum(NAG.p_exceed[k][i] for k in keys) / n for i in range(len(NAG_CANDIDATE_TAUS))]
+            ex = [sum(NAG.exceed(k, t) for k in keys) / n for t in NAG_CANDIDATE_TAUS]
             print(f"  lambda {lam:4.2f} block {blk:2d} | "
                   + "  ".join(f"t={t:g}:{r:5.1%}" for t, r in zip(NAG_CANDIDATE_TAUS, ex)))
 

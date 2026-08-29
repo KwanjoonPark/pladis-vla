@@ -28,6 +28,11 @@ branch is the positive baseline, so with lambda the blend strength:
      across the cells of one arm.
   G. assert_nag_delivered() reports the clip census and raises when the cap never
      fired (that arm is bit-identical to its own uncapped control).
+  I. Per-episode R statistics (eval_arm --pladis-nag-probe / rstats sidecars):
+     recording with the cap off leaves the output bit-identical; the summary's
+     mean/max/P(R>t) match a direct computation on the same tensors; the per
+     (step, block) rows sum back to the summary; clear_episode() empties the
+     ledgers and keeps the arm settings; the cap ledger's clip rate is reported.
   H. The probe's off-lambda reconstruction is EXACT: R measured at lambda' from an
      arm running at lambda equals R measured by an arm actually running at lambda'.
      experiments/diag_nag.py prices the whole dose ladder on one trajectory with
@@ -47,6 +52,7 @@ from diffusers.models.attention_processor import AttnProcessor2_0
 from pladis.attn_gr00t_n17 import (
     NAG,
     NAG_CANDIDATE_TAUS,
+    R_THRESHOLDS,
     SCHED,
     PLADISAttnProcessor,
     assert_nag_delivered,
@@ -333,9 +339,56 @@ def gate_H():
           f"lambda through Z, not through the norm)")
 
 
+def gate_I():
+    torch.manual_seed(0)
+    attn, (h, enc) = _bare(_attn()), _inputs(n_query=N_QUERY)
+    kw = dict(pladis_scale=3.0, method="softmax", beta=2.0, qgroup="all")
+
+    # references first, with recording OFF: _dense() runs a processor too, and
+    # with the census armed it would record a second cell and double n_slots
+    NAG.reset()
+    ref = _run(PLADISAttnProcessor(**kw), attn, h, enc)
+    z_d = _dense(attn, h, enc)
+    # (1) recording with the cap off changes nothing
+    NAG.reset(); NAG.record_episode, NAG.probe = True, True
+    SCHED.current = 2
+    z_pl = _heads(_run(PLADISAttnProcessor(block_idx=4, **kw), attn, h, enc))
+    assert torch.equal(_heads(ref), z_pl), "I: episode recording perturbed the output"
+    ratio = (_l1(z_pl) / (_l1(z_d) + 1e-6)).reshape(-1)
+
+    # (2) summary matches a direct computation; (3) rows sum to the summary
+    summary, rows = NAG.episode_stats()
+    assert summary["n_slots"] == ratio.numel() == HEADS * N_QUERY
+    assert abs(summary["mean_R"] - float(ratio.mean())) < 1e-5, summary
+    assert abs(summary["max_R"] - float(ratio.max())) < 1e-5, summary
+    for t in R_THRESHOLDS:
+        want = float((ratio > t).float().mean())
+        assert abs(summary[f"frac_gt_{t:g}"] - want) < 1e-6, (t, summary[f"frac_gt_{t:g}"], want)  # float32 mean
+    assert summary["clip_rate"] != summary["clip_rate"], "I: clip rate should be NaN with no cap"
+    assert len(rows) == 1 and rows[0]["step"] == 2 and rows[0]["block"] == 4, rows
+    assert rows[0]["n_slots"] == summary["n_slots"]
+    assert abs(rows[0]["frac_gt_3"] - summary["frac_gt_3"]) < 1e-6
+
+    # (4) clear keeps the settings, empties the ledgers
+    NAG.clear_episode()
+    assert NAG.record_episode and NAG.probe and not NAG.p_n and not NAG.n
+    assert NAG.episode_stats() == ({}, [])
+
+    # (5) with a cap: pre-cap R is what gets recorded, and the clip rate is reported
+    NAG.reset(); NAG.record_episode = True; NAG.arm(1.5, 1.0)
+    SCHED.current = 0
+    _run(PLADISAttnProcessor(nag_tau=1.5, block_idx=0, **kw), attn, h, enc)
+    summary, rows = NAG.episode_stats()
+    assert abs(summary["mean_R"] - float(ratio.mean())) < 1e-5, "I: capped arm did not record pre-cap R"
+    assert abs(summary["clip_rate"] - float((ratio > 1.5).float().mean())) < 1e-6, summary["clip_rate"]
+    NAG.reset(); SCHED.reset()
+    print(f"PASS gate I: per-episode R stats exact (mean {summary['mean_R']:.3f}, "
+          f"clip@1.5 {summary['clip_rate']:.0%}); recording is bit-inert; clear keeps settings")
+
+
 def main():
     torch.manual_seed(0)
-    gate_A(); gate_B(); gate_C(); gate_D(); gate_E(); gate_F(); gate_G(); gate_H()
+    gate_A(); gate_B(); gate_C(); gate_D(); gate_E(); gate_F(); gate_G(); gate_H(); gate_I()
     NAG.reset()
     SCHED.reset()
     print("ALL GATES PASSED (CPU smoke; tau selection is experiments/diag_nag.py, "
