@@ -291,7 +291,9 @@ AXES = {
                                 #   (lambda=4, tau=2.5, rho=0.5 -> lambda_eff=2
                                 #   on uncapped rows).
                                 "allxt-temp20l40",
-                                "allxt-temp20-nagn-l40", "allxt-temp20-nagnr-l40"]},
+                                "allxt-temp20-nagn-l40", "allxt-temp20-nagnr-l40",
+                                # 08-30 the lambda=2.5 rung (R recorded via the probe)
+                                "allxt-temp20l25"]},
                  "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -418,6 +420,10 @@ AXES = {
                      ("allxt-temp20-nagnr-l40", "allxt-temp20l20"),
                      ("allxt-temp20-nagnr-l40", "allxt-temp20-nagn-l20"),
                      ("allxt-temp20-nagnr-l40", "vanilla"),
+                     # 2026-08-30 lambda=2.5: vs vanilla and both dose neighbours
+                     ("allxt-temp20l25", "vanilla"),
+                     ("allxt-temp20l25", "allxt-temp20l20"),
+                     ("allxt-temp20l30", "allxt-temp20l25"),
                  ],
 
                  "smolvla": [

@@ -174,4 +174,14 @@ run allxt-temp20l30       --pladis-install --pladis-scale 3.0 --pladis-method so
 run allxt-temp20-nagn-l15 --pladis-install --pladis-scale 1.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 run allxt-temp20-nagn-l30 --pladis-install --pladis-scale 3.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 
+# 2026-08-30 (operator request) all-x-text sharp-softmax at lambda=2.5 — the rung
+# between the axis's optimum (lambda=2, 87.90) and the plain lambda=3 that did not
+# turn over (88.55, +3.19 vs vanilla Bonferroni*). Fills the top of the climbing
+# axis's ladder at the spacing robot already has (allxt-temp20l25 there).
+# Run with the cap-OFF probe: the rollout is bit-identical to the plain arm
+# (verify_nag.py gate A/I; 3/3 episodes reproduced on original), and the
+# per-episode R sidecars come for free — the first R census on THIS axis, at a
+# dose where the plain ladder is still rising. COST: ~5.1 h.
+run allxt-temp20l25 --pladis-install --pladis-scale 2.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"
