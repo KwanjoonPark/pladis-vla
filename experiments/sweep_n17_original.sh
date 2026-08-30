@@ -44,7 +44,10 @@ LANG_PID="${LANG_PID:-2689008}"
 while ps -p "$LANG_PID" -o args= 2>/dev/null | grep -q sweep_n17_language; do
   sleep 300
 done
-if ! grep -q "\[sweep\] ALL DONE" results/sweep/driver.out 2>/dev/null; then
+# 2026-08-31: the ALL-DONE check applies only where that July driver log exists
+# (machine A). On another machine the log is absent and the guard would abort a
+# row that has nothing to do with the 07-16 chaining.
+if [ -f results/sweep/driver.out ] && ! grep -q "\[sweep\] ALL DONE" results/sweep/driver.out; then
   echo "[orig] ABORT: language sweep exited without ALL DONE - resume it first" >&2
   exit 1
 fi
@@ -64,7 +67,7 @@ allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 \
 allxt-temp20l30 allxt-temp20-nagn-l10 allxt-temp20-nagn-l15 \
 allxt-temp20-nagn-l20 allxt-temp20-nagn-l30 allxtext \
 allxt-temp20-r allxt-temp20l20-r allxt-temp20-nagn-l20-r allxt-temp20l25 \
-hop-dense hop-a050b1 hop-a150b1 hop-a075b1 hop-a125b1 hop-a200b1 hop-t150b1 \
+vanilla-b hop-dense hop-a050b1 hop-a150b1 hop-a075b1 hop-a125b1 hop-a200b1 hop-t150b1 \
 hop-a110b5 hop-a110b5-nonorm hop-a150b1-adap"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
@@ -241,6 +244,9 @@ run allxt-temp20l25 --pladis-install --pladis-scale 2.5 --pladis-method softmax 
 # mandatory: circulation control degraded the top-20% (already-good) samples
 # there, so "does it hurt where nothing is wrong?" is read here, cheaply.
 # COST: ~1.3 h each at ORIG_EPISODES=100 (400 eps); 10 arms ~ 13 h.
+# vanilla-b = vanilla re-collected on the machine that runs this row (see the
+# robot driver's note); skip it on machine A.
+run vanilla-b
 run hop-dense          --hop-install --hop-alpha 1    --hop-beta 1
 run hop-a050b1         --hop-install --hop-alpha 0.5  --hop-beta 1
 run hop-a150b1         --hop-install --hop-alpha 1.5  --hop-beta 1
