@@ -834,6 +834,18 @@ AXES = {
                      ("allxt-temp20-r", "allxt-temp20"),
                      ("allxt-temp20l20-r", "allxt-temp20l20"),
                      ("allxt-temp20-nagn-l20-r", "allxt-temp20-nagn-l20"),
+                     # 2026-08-31 the -r arms are the campaign's EXTENSIBLE copies (0:0 vs
+                     # their parents at 400 eps, R recorded), so once ORIG_EPISODES=500
+                     # extends them and vanilla to 2,000 the key original readings are
+                     # re-taken among them at 5x n: the cap alone, the regret of the
+                     # shared setting, and each vs vanilla. Pairs run on the episodes
+                     # both arms share, so these read at 2,000 while -r-vs-parent stays 400.
+                     ("allxt-temp20-nagn-l20-r", "allxt-temp20l20-r"),   # cap alone
+                     ("allxt-temp20-nagn-l20-r", "allxt-temp20-r"),      # regret vs axis optimum
+                     ("allxt-temp20l20-r", "allxt-temp20-r"),            # the plain lambda 1->2 loss
+                     ("allxt-temp20-r", "vanilla"),
+                     ("allxt-temp20l20-r", "vanilla"),
+                     ("allxt-temp20-nagn-l20-r", "vanilla"),
                      # 2026-08-31 lambda=2.5: vs vanilla, the axis optimum, and both neighbours
                      ("allxt-temp20l25", "vanilla"),
                      ("allxt-temp20l25", "allxt-temp20"),
