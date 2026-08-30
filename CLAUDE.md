@@ -13,7 +13,9 @@ robustness benchmark with paired, episode-level statistics.
 `docs/SETUP.md` is the machine-provisioning spec. `docs/benchmark.md` (Korean) holds
 cross-verified LIBERO-plus facts. `docs/nag.md` is the design doc for the NAG
 normalization row — its §2 algebra is what decides which NAG arms are worth running
-and which are re-runs of the dose ladder under another name. Read the relevant one before changing behavior that
+and which are re-runs of the dose ladder under another name. `docs/hopfield.md` is
+the same for the self-attention (odd-block) Hopfield row; `docs/loci.md` §1.1 is its
+locus section. Read the relevant one before changing behavior that
 either document asserts — the documents are treated as contracts, and several source
 comments cite them by section.
 
@@ -61,8 +63,15 @@ bash experiments/run.sh experiments/verify_noise_axis.py
 bash experiments/run.sh experiments/verify_camera_axis.py            # --mode video
 bash experiments/run.sh experiments/verify_step_schedule.py   # --pladis-steps gate
 bash experiments/run.sh experiments/verify_nag.py             # --pladis-nag-* gate
+bash experiments/run.sh experiments/verify_hopfield.py        # --hop-* gate (odd/self blocks)
 bash experiments/run.sh experiments/verify_eplog_host.py      # cross-machine guard
 ```
+
+`experiments/diag_hopfield.py` is the Hopfield row's phase-0 measurement
+(docs/hopfield.md §6): a vanilla rollout with the probe armed, reporting the realized
+symmetry index η, the paper's stability measures, and the displacement price list
+from which `--hop-alpha` / `--hop-temp` are chosen. Choosing α from the paper's SDXL
+operating points instead is how a hop arm ends up inert or identical to `hop-dense`.
 
 `experiments/diag_nag.py` is a measurement, not a gate: it runs a few episodes with
 the NAG census armed and reports the L1-ratio distribution that `--pladis-nag-tau`

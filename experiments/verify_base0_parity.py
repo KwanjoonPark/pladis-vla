@@ -9,6 +9,10 @@ gated on do_sparse_guidance = pladis_scale > 0, PLADIS/pipeline/
 pipeline_sdxl.py:1215,1707), so base0 must equal vanilla byte-for-byte:
 torch.equal on every case, plus a finiteness guard on the lambda>0 branch.
 
+Also (2026-08-31) the Hopfield processor of the odd/self blocks: beta=0 takes the
+same fused call (bit-exact on the self case at N1.7 shapes), and the processor
+refuses both cross cases (docs/hopfield.md §8).
+
 Run: bash experiments/run.sh experiments/verify_base0_parity.py
 """
 
@@ -16,7 +20,7 @@ import torch
 from diffusers.models.attention import Attention
 from diffusers.models.attention_processor import AttnProcessor2_0
 
-from pladis.attn_gr00t_n17 import PLADISAttnProcessor
+from pladis.attn_gr00t_n17 import HOP, HopfieldAttnProcessor, PLADISAttnProcessor
 
 
 def main():
@@ -68,6 +72,31 @@ def main():
             )
             treated = attn(**kw)
             assert torch.isfinite(treated.float()).all(), f"{name}: lambda>0 output not finite"
+
+            # Hopfield processor (docs/hopfield.md §8): beta=0 is the same fused call on
+            # the self case, and the processor must REFUSE both cross cases rather than
+            # decompose a non-square (or square-by-accident) cross map.
+            HOP.reset()
+            attn.set_processor(HopfieldAttnProcessor(alpha=1.0, beta=0.0))
+            if name.startswith("self"):
+                hop = attn(**kw)
+                hbit = torch.equal(ref, hop)
+                print(f"[parity] {name:22s} hopfield beta=0 bit-exact={hbit}", flush=True)
+                ok &= hbit
+                attn.set_processor(HopfieldAttnProcessor(alpha=1.5, beta=2.0))
+                hop = attn(**kw)
+                assert torch.isfinite(hop.float()).all(), f"{name}: hopfield alpha>1 output not finite"
+                assert not torch.equal(ref, hop), f"{name}: hopfield alpha=1.5 beta=2 changed nothing"
+            else:
+                try:
+                    attn(**kw)
+                except RuntimeError as exc:
+                    print(f"[parity] {name:22s} hopfield refuses cross call: OK ({str(exc)[:40]}...)",
+                          flush=True)
+                else:
+                    print(f"[parity] {name:22s} hopfield ACCEPTED a cross call", flush=True)
+                    ok = False
+            HOP.reset()
 
     print("[parity] PASS" if ok else "[parity] FAIL", flush=True)
     raise SystemExit(0 if ok else 1)

@@ -51,6 +51,36 @@ slice `[state(0:n); action(n:)]`. No mass renormalization required — every
 row's keys are all one modality, and rows outside the qgroup keep the plain
 dense map (mass 1).
 
+### 1.1 GR00T N1.7 — odd self-attention blocks: Hopfield sym/skew decomposition [implemented]
+
+A second intervention family lives on the blocks §1 leaves alone. Measured:
+`AlternateVLDiT.forward` runs every ODD block as self-attention through the
+SAME `attn1` module, with `encoder_hidden_states=None` and
+`attention_mask=None` (`gr00t/model/modules/dit.py:380-388`), over the
+`[state(1); action(40)]` sequence of `gr00t_n1d7.py:248` — so its logits
+`L = QKᵀ/√d` are SQUARE (41×41 per head, 32 heads × 48, 16 odd blocks of 32)
+and queries and keys are the same tokens. That is the precondition of the
+symmetric/skew decomposition of Cho, Han & Jin (ICML 2026, *Balancing
+Fidelity and Diversity in Diffusion Models via Symmetric Attention
+Decomposition: Hopfield Perspective*): with `L = L_sym + L_skew`,
+`L_sym = (L+Lᵀ)/2` is a Hopfield energy landscape over the tokens and
+`L_skew = (L−Lᵀ)/2` a circulation that leaves the energy untouched
+(`ξᵀL_skewξ ≡ 0`). The even (cross) blocks have VLM keys — non-square, keys ≠
+queries — so the decomposition is undefined there and they stay the PLADIS
+locus of §1. The two block sets are disjoint, which is what lets both
+processors be installed on one DiT (a combined arm is the union of the two
+flag sets).
+
+Mapping (`pladis/attn_gr00t_n17.py`, `HopfieldAttnProcessor`): per odd block
+and head, `L_α = L + (α−1)·L_skew`, `Ξ = softmax(L)V`, `Ξ_α = softmax(L_α)V`,
+`Ξ_b = Ξ + β(Ξ_α − Ξ)`, then the reference code's norm-match
+`Ξ_out = Ξ_b · clamp(‖Ξ_α‖₂/‖Ξ_b‖₂, 0.25, 4)` per (batch, head, query row).
+`qgroup` = the same `[state; action]` row slice as §1, rows outside it keep
+`Ξ`; the denoising-step schedule multiplies β per step; `β=0` (and every
+zero-weight step) takes the fused-SDPA path, bit-identical to vanilla; `α=1`
+is bit-identical to the eager dense path (the self-block eager-dense
+control). Full derivation, arms and gates: `docs/hopfield.md`.
+
 ## 2. π0 / π0.5 — joint attention (FLUX pattern) [this track]
 
 Measured from the installed openpi
@@ -205,3 +235,13 @@ Anything not in this table is a bug, not a choice.
 | λ=0 delegates to the native attention path | attn_gr00t_n17 | official gates the processor swap on `pladis_scale > 0` (pipeline_sdxl.py:1215,1707); base0 ≡ vanilla bit-exact |
 | suffix-pass-only patch scope (`max_suffix_query`) | attn_pi0 | equivalent of the official per-module processor placement, expressed as a call-site gate because the Gemma path has no processor registry |
 | blend order `dense + λ(sparse−dense)` | all hooks | algebraically identical to the official `λ·sparse + (1−λ)·dense` |
+
+Deviations from the Hopfield reference code (Cho et al. 2026, Appendix A.1,
+Algorithm 2) in `HopfieldAttnProcessor` (§1.1):
+
+| deviation | where | rationale |
+|---|---|---|
+| blend and norm-match on `Z = P·(X W_V)` (per-head 48-ch output) instead of on `Ξ = P·X` (1536-ch input features) with `W_V` applied afterwards | attn_gr00t_n17 | `Z = Ξ W_V^h` by associativity, so the blend is the paper's up to rounding; only the norm-match ratio is measured on 48 channels instead of 1536. Same placement as the NAG stage (docs/nag.md §3), one code convention for both output-space stages |
+| `L_α = L + (α−1)·L_skew` instead of `L_sym + α·L_skew` | attn_gr00t_n17 | identical algebra (paper Eq. 39 form); makes `α=1` bit-identical to the dense path instead of 1-ulp off, so the eager-dense control is `torch.equal` |
+| `qgroup` row gating, β step schedule | attn_gr00t_n17 | this project's locus factorization; the reference applies the blend to every row of every self-attention layer at every step |
+| diagnostics (`E`, `r`, `Align`, `η`) computed on `Ξ = P·X` exactly as published | attn_gr00t_n17 (probe) | no deviation — listed so the two spaces are not confused: the *intervention* is on `Z`, the *measurement* on `Ξ` |

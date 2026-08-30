@@ -63,6 +63,26 @@ Two consequences from docs/nag.md §2 that the interface enforces rather than
 documents: refinement alone (rho<1, tau off) is the SAME arm as scale=rho*lambda
 (so it raises), and lambda=0 with NAG armed is rejected (base0 must stay on the
 fused-SDPA parity path, and R == 1 there makes the cap a no-op anyway).
+
+Also new here (2026-08-31): a SECOND processor, :class:`HopfieldAttnProcessor`,
+for the ODD blocks — the self-attention blocks PLADIS never touches. It is the
+symmetric/skew circulation control of Cho, Han & Jin (ICML 2026) in the mapping
+of docs/hopfield.md §1 / docs/loci.md §1.1. Per odd block and head, with the
+square logits ``L = QK^T/sqrt(d)`` over the ``[state; action]`` tokens:
+
+    L_skew = (L - L^T)/2                          # circulation; xi^T L_skew xi == 0
+    L_a    = L + (alpha - 1) * L_skew             # == L_sym + alpha*L_skew; alpha=1 -> L bitwise
+    Z      = softmax(L) V,   Z_a = softmax(L_a) V
+    Z_b    = Z + beta * (Z_a - Z)
+    Z_out  = Z_b * clamp(||Z_a||_2 / ||Z_b||_2, 0.25, 4)   # per (b, head, row); ref code Alg. 2
+
+``beta == 0`` (and every zero-weight schedule step) takes the fused-SDPA path,
+bit-identical to vanilla; ``alpha == 1`` is bit-identical to the manual dense
+path (the odd-block eager-dense control). ``--hop-probe`` returns the fused
+output and records the paper's stability diagnostics (eta, E, r, Align on
+``Xi = P X``) plus a price list of the (alpha, temperature) grid computed from
+the same logits, so phase 0 (docs/hopfield.md §6) costs a vanilla rollout. The
+two processors live on disjoint block sets and share only the step probe.
 """
 
 from __future__ import annotations
@@ -255,11 +275,28 @@ class _NagCensus:
         self.p_max: dict = {}
         self.p_exceed: dict = {}  # key -> exceedance counts over _EXCEED_GRID
         self.p_hist: dict = {}  # key -> histogram of R
+        # relative L2 displacement of the blend, ||Z_PL - Z_d||_2 / ||Z_d||_2 per
+        # (head, query row), same key as the probe ledger. Recorded only; the
+        # NAG report never reads it. It is the even-block STRENGTH reference the
+        # Hopfield phase 0 matches its alpha grid against (docs/hopfield.md §6):
+        # R is a magnitude ratio, and a magnitude can stay put while the feature
+        # moves, so the match needs a displacement measured the same way on both.
+        self.p_disp_sum: dict = {}
+        self.p_disp_n: dict = {}
 
     def clear_episode(self) -> None:
         """Drop both ledgers, keep the arm settings (tau/rho/probe flags)."""
         self.n, self.n_clipped, self.r_max = {}, {}, {}
         self.p_n, self.p_sum, self.p_max, self.p_exceed, self.p_hist = {}, {}, {}, {}, {}
+        self.p_disp_sum, self.p_disp_n = {}, {}
+
+    def record_disp(self, key, z_blend: torch.Tensor, z_dense: torch.Tensor) -> None:
+        """Relative L2 displacement of the blended output from the dense one."""
+        zd = z_dense.detach().float()
+        d = torch.linalg.vector_norm(z_blend.detach().float() - zd, dim=-1)
+        d = d / torch.linalg.vector_norm(zd, dim=-1).clamp_min(_NAG_EPS)
+        self.p_disp_sum[key] = self.p_disp_sum.get(key, 0.0) + float(d.sum())
+        self.p_disp_n[key] = self.p_disp_n.get(key, 0) + d.numel()
 
     # 0..8 in 0.05 steps; every candidate tau lands ON an edge. The top matters:
     # the first measurement (language/libero_10) put p90 at 2.65 and the max at 12.4
@@ -440,6 +477,25 @@ def assert_nag_delivered() -> str:
             f"max R {max(NAG.r_max.values()):.3f}")
 
 
+def _split_point(qgroup: str, n_state_tokens: int, n_query: int) -> Optional[int]:
+    """``n_state_tokens`` if ``qgroup`` gates a query-row group, else None.
+
+    A wrong n_state_tokens mis-slices the two groups SILENTLY (no shape error —
+    cat() reassembles any split), so the whole state/action contrast would be
+    meaningless. Check the split is non-degenerate against the live query length.
+    """
+    if qgroup == "all":
+        return None
+    ns = int(n_state_tokens)
+    if not 0 < ns < n_query:
+        raise ValueError(
+            f"n_state_tokens={ns} does not split a {n_query}-row query "
+            f"sequence into non-empty [state; action] groups — the "
+            f"qgroup={qgroup!r} arm would be degenerate."
+        )
+    return ns
+
+
 class PLADISAttnProcessor:
     """Dense/sparse-extrapolation attention processor (single forward pass)."""
 
@@ -493,6 +549,7 @@ class PLADISAttnProcessor:
         key = (step, self.block_idx, self.qgroup)
         if NAG.probe or NAG.record_episode:
             NAG.record_probe(key + (lam,), ratio)
+            NAG.record_disp(key + (lam,), z_blend, z_dense)
             # Every other rung of the ladder, from the same two features: the blend
             # is affine in lambda, so Z(l) = Z_d + (l/lam)*(Z_PL - Z_d) exactly.
             if NAG.probe and NAG.probe_scales:
@@ -552,22 +609,9 @@ class PLADISAttnProcessor:
         return lam
 
     def _split_point(self, n_query: int) -> Optional[int]:
-        """``n_state_tokens`` if this processor gates a query group, else None.
-
-        A wrong n_state_tokens mis-slices the two groups SILENTLY (no shape error —
-        cat() reassembles any split), so the whole state/action contrast would be
-        meaningless. Check the split is non-degenerate against the live query length.
-        """
-        if self.qgroup == "all":
-            return None
-        ns = self.n_state_tokens
-        if not 0 < ns < n_query:
-            raise ValueError(
-                f"n_state_tokens={ns} does not split a {n_query}-row query "
-                f"sequence into non-empty [state; action] groups — the "
-                f"qgroup={self.qgroup!r} arm would be degenerate."
-            )
-        return ns
+        """``n_state_tokens`` if this processor gates a query group, else None
+        (module-level :func:`_split_point`, shared with the Hopfield processor)."""
+        return _split_point(self.qgroup, self.n_state_tokens, n_query)
 
     def _sparse(self, logits: torch.Tensor) -> torch.Tensor:
         z = self.beta * logits
@@ -975,3 +1019,732 @@ def install_pladis_cells(
             nag_rho=nag_rho,
         )
     return sorted(installed)
+
+
+# =============================================================================
+# Hopfield circulation control on the ODD (self-attention) blocks
+# (docs/hopfield.md; docs/loci.md §1.1) — 2026-08-31
+# =============================================================================
+
+# The grids phase 0 prices from ONE vanilla rollout (docs/hopfield.md §6): for
+# every alpha and every temperature, the relative displacement of the retrieved
+# feature and the norm-match clamp rate at every beta, from the same logits and
+# values the rollout computed. The arm values are read off this list, not
+# transferred from the paper (whose operating points are SDXL/SD3 numbers).
+HOP_ALPHA_GRID = (0.5, 0.75, 0.9, 1.1, 1.25, 1.5, 2.0)
+HOP_TEMP_GRID = (1.25, 1.5, 2.0, 3.0)
+HOP_BETA_GRID = (0.5, 1.0, 2.0, 5.0)
+# Reference code (paper Appendix A.1, Algorithm 2): eps, r_min, r_max of the
+# norm-match. eps guards a zero row in clamp_min ONLY (the docs/nag.md §3 lesson).
+_HOP_EPS = 1e-6
+_HOP_R_MIN, _HOP_R_MAX = 0.25, 4.0
+_VALID_HOP_NORMS = ("l2", "off")
+
+# Sidecar columns (eval_arm's _HopStatsWriter reads these, so the writer and the
+# census cannot drift apart).
+_HOP_DISP_COLS = ([f"disp_a{a:g}" for a in HOP_ALPHA_GRID]
+                  + [f"disp_t{t:g}" for t in HOP_TEMP_GRID])
+HOP_SUMMARY_COLS = (["n_calls", "eta_mean", "eta_p10", "eta_p50", "eta_p90", "eta_min",
+                     "E_mean", "r_mean", "align_mean", "align_p10",
+                     "clamp_lo_rate", "clamp_hi_rate", "beta_eff_mean", "floor_mean"]
+                    + _HOP_DISP_COLS)
+HOP_ROW_COLS = (["step", "block", "n_calls", "eta_mean", "E_mean", "r_mean", "align_mean",
+                 "clamp_lo_rate", "clamp_hi_rate", "beta_eff_mean", "floor_mean"]
+                + _HOP_DISP_COLS)
+
+
+def _hist(x: torch.Tensor, lo: float, hi: float, bins: int) -> torch.Tensor:
+    return torch.histc(x.detach().float().reshape(-1).clamp(lo, hi),
+                       bins=bins, min=lo, max=hi).cpu()
+
+
+def _hist_quantiles(hist: torch.Tensor, lo: float, hi: float, qs) -> dict:
+    """Quantiles read off a histogram over [lo, hi]; values past the top clamp to it."""
+    total = float(hist.sum())
+    if total == 0:
+        return {q: float("nan") for q in qs}
+    edge, cum, out = (hi - lo) / len(hist), 0.0, {}
+    it = iter(sorted(qs))
+    want = next(it, None)
+    for i, c in enumerate(hist.tolist()):
+        cum += c
+        while want is not None and cum / total >= want:
+            out[want] = lo + (i + 1) * edge
+            want = next(it, None)
+    for q in qs:
+        out.setdefault(q, hi)
+    return out
+
+
+def _eta(logits: torch.Tensor, skew: torch.Tensor) -> torch.Tensor:
+    """Realized symmetry index per (batch, head), paper Eq. 36: in [-1, 1]."""
+    sym = 0.5 * (logits + logits.transpose(-2, -1))
+    s2 = sym.pow(2).sum(dim=(-2, -1))
+    n2 = skew.pow(2).sum(dim=(-2, -1))
+    return (s2 - n2) / (s2 + n2).clamp_min(_HOP_EPS)
+
+
+def _row_norm(z: torch.Tensor) -> torch.Tensor:
+    return torch.linalg.vector_norm(z, dim=-1, keepdim=True)
+
+
+class _HopCensus:
+    """Per-inference census of the Hopfield processors (delivery + diagnostics).
+
+    Same role as :data:`SCHED`/:data:`NAG`: one module-level instance, keyed by
+    (denoising step, block), that turns "the arm silently ran as something else"
+    into a hard error (:func:`assert_hopfield_delivered`) and, in probe mode, is
+    the instrument of experiments/diag_hopfield.py. It keeps its OWN schedule
+    weights and reads only ``SCHED.current`` — ``SCHED.arm()`` refuses two
+    different weight vectors on one model, and a combined arm legitimately runs
+    the cross blocks on ``0,0,1,1`` and the self blocks flat.
+    """
+
+    _BINS = 200
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.alpha: float = 1.0
+        self.beta: float = 0.0
+        self.temp: float = 1.0
+        self.adaptive: bool = False
+        self.norm: str = "l2"
+        self.qgroup: str = "all"
+        self.weights: Optional[tuple] = None  # own per-step multiplier on beta
+        self.n_steps: Optional[int] = None
+        self.blocks: tuple = ()
+        self.probe: bool = False  # bit-identical rollout, diagnostics recorded
+        self.record_episode: bool = False  # per-episode stats (hopstats sidecars)
+        self.clear_episode()
+
+    def clear_episode(self) -> None:
+        """Drop every ledger, keep the arm settings."""
+        # delivery, key = (step, block)
+        self.n_applied: dict = {}
+        self.n_skipped: dict = {}
+        # arm ledger, key = (step, block): norm-match clamp events, realized beta
+        self.a_n: dict = {}
+        self.a_lo: dict = {}
+        self.a_hi: dict = {}
+        self.beff_sum: dict = {}
+        self.beff_n: dict = {}
+        # diagnostics, key = (step, block)
+        self.d_calls: dict = {}
+        self.eta_n: dict = {}
+        self.eta_sum: dict = {}
+        self.eta_min: dict = {}
+        self.eta_hist: dict = {}
+        self.E_sum: dict = {}
+        self.E_n: dict = {}
+        self.r_sum: dict = {}
+        self.al_sum: dict = {}
+        self.al_hist: dict = {}
+        # price list, key = (step, block, kind, value), kind in {"alpha", "temp"}
+        self.p_n: dict = {}
+        self.p_sum: dict = {}
+        self.p_hist: dict = {}
+        self.p_lo: dict = {}  # key -> {beta: count of ratio < r_min}
+        self.p_hi: dict = {}  # key -> {beta: count of ratio > r_max}
+        # fused-vs-eager floor, key = (step, block)
+        self.f_n: dict = {}
+        self.f_sum: dict = {}
+
+    def arm(self, alpha, beta, temp, adaptive, norm, qgroup, weights, n_steps, blocks) -> None:
+        if self.blocks:
+            raise ValueError(
+                f"Hopfield processors are already installed on blocks {list(self.blocks)} "
+                f"— one install per model (reset the census first)."
+            )
+        self.alpha, self.beta, self.temp = float(alpha), float(beta), float(temp)
+        self.adaptive, self.norm, self.qgroup = bool(adaptive), norm, qgroup
+        self.weights, self.n_steps, self.blocks = weights, int(n_steps), tuple(blocks)
+
+    @property
+    def active_steps(self) -> frozenset:
+        """Steps the arm must blend at: the non-zero weights, or every step."""
+        if self.n_steps is None:
+            return frozenset()
+        if self.weights is None:
+            return frozenset(range(self.n_steps))
+        return frozenset(i for i, w in enumerate(self.weights) if w != 0.0)
+
+    # -- recording -------------------------------------------------------------
+    def record_delivery(self, key, applied: bool) -> None:
+        ledger = self.n_applied if applied else self.n_skipped
+        ledger[key] = ledger.get(key, 0) + 1
+
+    def record_eta(self, key, eta: torch.Tensor) -> None:
+        e = eta.detach().float().reshape(-1)
+        self.eta_n[key] = self.eta_n.get(key, 0) + e.numel()
+        self.eta_sum[key] = self.eta_sum.get(key, 0.0) + float(e.sum())
+        self.eta_min[key] = min(self.eta_min.get(key, 1.0), float(e.min()))
+        h = _hist(e, -1.0, 1.0, self._BINS)
+        prev = self.eta_hist.get(key)
+        self.eta_hist[key] = h if prev is None else prev + h
+
+    def record_arm(self, key, raw_ratio: Optional[torch.Tensor], beta_eff) -> None:
+        """One arm call: clamp events of the norm-match (pre-clamp ratio) + beta."""
+        if raw_ratio is not None:
+            r = raw_ratio.detach().reshape(-1)
+            # one sync for both bounds
+            lo_hi = torch.stack([(r < _HOP_R_MIN).sum(), (r > _HOP_R_MAX).sum()]).tolist()
+            self.a_n[key] = self.a_n.get(key, 0) + r.numel()
+            self.a_lo[key] = self.a_lo.get(key, 0) + int(lo_hi[0])
+            self.a_hi[key] = self.a_hi.get(key, 0) + int(lo_hi[1])
+        b = float(beta_eff) if not isinstance(beta_eff, torch.Tensor) else float(beta_eff.item())
+        self.beff_sum[key] = self.beff_sum.get(key, 0.0) + b
+        self.beff_n[key] = self.beff_n.get(key, 0) + 1
+
+    def record_diag(self, key, E: torch.Tensor, r: torch.Tensor, align: torch.Tensor) -> None:
+        """Paper Eq. 27-29 per retrieved feature column, aggregated over (b, h, column)."""
+        self.d_calls[key] = self.d_calls.get(key, 0) + 1
+        n = E.numel()
+        self.E_n[key] = self.E_n.get(key, 0) + n
+        self.E_sum[key] = self.E_sum.get(key, 0.0) + float(E.detach().float().sum())
+        self.r_sum[key] = self.r_sum.get(key, 0.0) + float(r.detach().float().sum())
+        a = align.detach().float().reshape(-1)
+        self.al_sum[key] = self.al_sum.get(key, 0.0) + float(a.sum())
+        h = _hist(a, -1.0, 1.0, self._BINS)
+        prev = self.al_hist.get(key)
+        self.al_hist[key] = h if prev is None else prev + h
+
+    def record_price(self, key, disp: torch.Tensor, lo: dict, hi: dict) -> None:
+        d = disp.detach().float().reshape(-1)
+        self.p_n[key] = self.p_n.get(key, 0) + d.numel()
+        self.p_sum[key] = self.p_sum.get(key, 0.0) + float(d.sum())
+        h = _hist(d, 0.0, 2.0, self._BINS)
+        prev = self.p_hist.get(key)
+        self.p_hist[key] = h if prev is None else prev + h
+        plo, phi = self.p_lo.setdefault(key, {}), self.p_hi.setdefault(key, {})
+        for b in lo:
+            plo[b] = plo.get(b, 0) + int(lo[b])
+            phi[b] = phi.get(b, 0) + int(hi[b])
+
+    def record_floor(self, key, d: torch.Tensor) -> None:
+        f = d.detach().float().reshape(-1)
+        self.f_n[key] = self.f_n.get(key, 0) + f.numel()
+        self.f_sum[key] = self.f_sum.get(key, 0.0) + float(f.sum())
+
+    # -- reading ---------------------------------------------------------------
+    @staticmethod
+    def _sum_hist(hists, keys):
+        hs = [hists[k] for k in keys if k in hists]
+        if not hs:
+            return None
+        return sum(hs[1:], hs[0].clone())
+
+    def _stats(self, keys) -> dict:
+        """Aggregate over a set of (step, block) keys into the summary fields."""
+        nan = float("nan")
+        out = {c: nan for c in HOP_SUMMARY_COLS}
+        out["n_calls"] = sum(self.n_applied.get(k, 0) for k in keys)
+        n_eta = sum(self.eta_n.get(k, 0) for k in keys)
+        if n_eta:
+            out["eta_mean"] = sum(self.eta_sum[k] for k in keys if k in self.eta_sum) / n_eta
+            out["eta_min"] = min(self.eta_min[k] for k in keys if k in self.eta_min)
+            q = _hist_quantiles(self._sum_hist(self.eta_hist, keys), -1.0, 1.0, (0.1, 0.5, 0.9))
+            out["eta_p10"], out["eta_p50"], out["eta_p90"] = q[0.1], q[0.5], q[0.9]
+        n_E = sum(self.E_n.get(k, 0) for k in keys)
+        if n_E:
+            out["E_mean"] = sum(self.E_sum[k] for k in keys if k in self.E_sum) / n_E
+            out["r_mean"] = sum(self.r_sum[k] for k in keys if k in self.r_sum) / n_E
+            out["align_mean"] = sum(self.al_sum[k] for k in keys if k in self.al_sum) / n_E
+            out["align_p10"] = _hist_quantiles(
+                self._sum_hist(self.al_hist, keys), -1.0, 1.0, (0.1,))[0.1]
+        n_a = sum(self.a_n.get(k, 0) for k in keys)
+        if n_a:
+            out["clamp_lo_rate"] = sum(self.a_lo.get(k, 0) for k in keys) / n_a
+            out["clamp_hi_rate"] = sum(self.a_hi.get(k, 0) for k in keys) / n_a
+        n_b = sum(self.beff_n.get(k, 0) for k in keys)
+        if n_b:
+            out["beta_eff_mean"] = sum(self.beff_sum.get(k, 0.0) for k in keys) / n_b
+        n_f = sum(self.f_n.get(k, 0) for k in keys)
+        if n_f:
+            out["floor_mean"] = sum(self.f_sum.get(k, 0.0) for k in keys) / n_f
+        for kind, grid, col in (("alpha", HOP_ALPHA_GRID, "disp_a"), ("temp", HOP_TEMP_GRID, "disp_t")):
+            for v in grid:
+                pk = [k + (kind, v) for k in keys]
+                n_p = sum(self.p_n.get(k, 0) for k in pk)
+                if n_p:
+                    out[f"{col}{v:g}"] = sum(self.p_sum.get(k, 0.0) for k in pk) / n_p
+        return out
+
+    def price_quantiles(self, keys, kind: str, value: float, qs=(0.5, 0.9)) -> dict:
+        pk = [k + (kind, value) for k in keys]
+        return _hist_quantiles(self._sum_hist(self.p_hist, pk) if any(k in self.p_hist for k in pk)
+                               else torch.zeros(self._BINS), 0.0, 2.0, qs)
+
+    def price_clip_rate(self, keys, kind: str, value: float, beta: float) -> tuple:
+        pk = [k + (kind, value) for k in keys]
+        n = sum(self.p_n.get(k, 0) for k in pk)
+        if not n:
+            return float("nan"), float("nan")
+        lo = sum(self.p_lo.get(k, {}).get(beta, 0) for k in pk)
+        hi = sum(self.p_hi.get(k, {}).get(beta, 0) for k in pk)
+        return lo / n, hi / n
+
+    def episode_stats(self) -> tuple:
+        """(summary dict over the whole episode, one row per (step, block))."""
+        keys = sorted(set(self.n_applied) | set(self.eta_n) | set(self.E_n))
+        if not keys:
+            return {}, []
+        summary = self._stats(keys)
+        rows = []
+        for k in keys:
+            s = self._stats([k])
+            row = {"step": k[0], "block": k[1]}
+            row.update({c: s[c] for c in HOP_ROW_COLS if c not in ("step", "block")})
+            rows.append(row)
+        return summary, rows
+
+
+HOP = _HopCensus()
+
+
+def fmt_hop(alpha: float, beta: float, qgroup: str, n_state_tokens: int, temp: float = 1.0,
+            schedule: Optional[tuple] = None, adaptive: bool = False, norm: str = "l2") -> str:
+    """Canonical arm string for signatures/logs — append-only: every optional
+    part is emitted only when it is not its default."""
+    s = f"a{alpha:g},b{beta:g},q{qgroup},ns{int(n_state_tokens)}"
+    if temp != 1.0:
+        s += f",t{temp:g}"
+    if schedule is not None:
+        s += f",s{fmt_schedule(schedule)}"
+    if adaptive:
+        s += ",adap"
+    if norm == "off":
+        s += ",norm-off"
+    return s
+
+
+def validate_hopfield(alpha: float, beta: float, temp: float = 1.0, adaptive: bool = False,
+                      norm: str = "l2", schedule=None, probe: bool = False) -> Optional[str]:
+    """Reject every Hopfield setting that would silently be a different arm.
+
+    Called at install AND from eval_arm's argument layer (like validate_nag), so a
+    bad combination dies before a checkpoint is loaded. Returns a notice string
+    for the one legal-but-special setting (alpha=1, beta>0: the eager-dense
+    control), None otherwise.
+    """
+    alpha, beta, temp = float(alpha), float(beta), float(temp)
+    sched = parse_schedule(schedule)
+    if beta < 0.0:
+        raise ValueError(f"Hopfield beta must be >= 0, got {beta:g}.")
+    if temp <= 0.0:
+        raise ValueError(f"Hopfield temperature must be > 0, got {temp:g}.")
+    if norm not in _VALID_HOP_NORMS:
+        raise ValueError(f"Hopfield norm must be one of {_VALID_HOP_NORMS}, got {norm!r}.")
+    if probe:
+        if beta != 0.0 or alpha != 1.0 or temp != 1.0 or adaptive or norm != "l2" or sched is not None:
+            raise ValueError(
+                "Hopfield probe is the intervention-OFF measurement (alpha=1, beta=0, no "
+                "temp/adaptive/norm/schedule): it returns the fused output bit-identically "
+                "and only records. Run the arm without --hop-probe to intervene."
+            )
+        return None
+    if beta == 0.0:
+        dead = []
+        if alpha != 1.0:
+            dead.append(f"alpha={alpha:g}")
+        if temp != 1.0:
+            dead.append(f"temp={temp:g}")
+        if adaptive:
+            dead.append("adaptive")
+        if norm != "l2":
+            dead.append(f"norm={norm}")
+        if sched is not None:
+            dead.append(f"schedule={fmt_schedule(sched)}")
+        if dead:
+            raise ValueError(
+                f"Hopfield beta=0 takes the fused-SDPA path (bit-identical to vanilla), so "
+                f"{', '.join(dead)} would be dead flags: the signature would claim an "
+                f"intervention that changes nothing. Set beta > 0 or drop them."
+            )
+        return None
+    if temp != 1.0 and alpha != 1.0:
+        raise ValueError(
+            f"Hopfield temp={temp:g} with alpha={alpha:g}: the temperature control replaces "
+            f"the skew-scaled retrieval, so the two are one arm each, never both."
+        )
+    if alpha == 1.0 and temp == 1.0:
+        return (f"[HOP] alpha=1, beta={beta:g}: Z_a == Z bitwise, so this arm is the "
+                f"odd-block EAGER-DENSE control (docs/hopfield.md §2b), not an intervention.")
+    return None
+
+
+def assert_hopfield_delivered() -> str:
+    """Prove the Hopfield processors ran at every (active step, odd block) cell.
+
+    Failure modes converted into a hard error, each of which would burn a full
+    sweep under an arm name that claims an intervention: the pre-hook never
+    fired; an active step the loop never reached; a (step, block) cell that
+    never ran; a blend at a zero-weight step. Returns the census line.
+    """
+    if not HOP.blocks:
+        raise RuntimeError("assert_hopfield_delivered() called with no Hopfield install.")
+    if not SCHED.seen:
+        raise RuntimeError(
+            "Hopfield step probe never fired: no DiT forward was observed, so nothing "
+            "proves the odd blocks ran through the Hopfield processor."
+        )
+    active = HOP.active_steps
+    missing = sorted(active - SCHED.seen)
+    if missing:
+        raise RuntimeError(
+            f"steps {missing} are active for the Hopfield arm but were never reached "
+            f"(observed {sorted(SCHED.seen)}, N={HOP.n_steps}) — the arm ran weaker than it claims."
+        )
+    stray = sorted({s for (s, _) in HOP.n_applied if s not in active})
+    if stray:
+        raise RuntimeError(
+            f"Hopfield blend fired at zero-weight steps {stray}; schedule is "
+            f"{fmt_schedule(HOP.weights)}."
+        )
+    cells = [(s, b) for s in sorted(active) for b in HOP.blocks if HOP.n_applied.get((s, b), 0) == 0]
+    if cells:
+        raise RuntimeError(
+            f"Hopfield processor never ran at (step, block) cells {cells[:8]}"
+            f"{' ...' if len(cells) > 8 else ''} — the arm would be partly vanilla."
+        )
+    per_step = {}
+    for (s, _), n in HOP.n_applied.items():
+        per_step[s] = per_step.get(s, 0) + n
+    skipped = {}
+    for (s, _), n in HOP.n_skipped.items():
+        skipped[s] = skipped.get(s, 0) + n
+    what = "probe" if HOP.probe else fmt_hop(HOP.alpha, HOP.beta, HOP.qgroup, 1, HOP.temp,
+                                              HOP.weights, HOP.adaptive, HOP.norm)
+    line = (f"hop={what}; blocks {list(HOP.blocks)}; calls/step "
+            f"{dict(sorted(per_step.items()))}; fused calls/step {dict(sorted(skipped.items()))}")
+    n_b = sum(HOP.beff_n.values())
+    if HOP.adaptive and n_b:
+        line += f"; mean realized beta_eff {sum(HOP.beff_sum.values()) / n_b:.4f}"
+    return line
+
+
+class HopfieldAttnProcessor:
+    """Symmetric/skew circulation control for one ODD (self-attention) block.
+
+    docs/hopfield.md §1/§3. Prologue identical to :class:`PLADISAttnProcessor`
+    (diffusers' AttnProcessor2_0); the attention core is replaced by
+
+        beta_now == 0  ->  fused F.scaled_dot_product_attention   (bit-identical to vanilla)
+        else           ->  Z_out = norm_match( Z + beta*(Z_a - Z) ),  Z_a = softmax(L_a) V
+
+    with ``L_a = L + (alpha-1)*L_skew`` (``temp`` != 1: ``L_a = temp*L`` instead —
+    the paper's temperature control through the same blend and norm-match).
+    ``qgroup`` rows outside the group take Z; ``schedule`` multiplies beta per
+    denoising step; ``adaptive`` scales (alpha-1) by the realized symmetry
+    eta_bar and beta by (1 - eta_bar). In ``HOP.probe`` mode the fused output is
+    returned and the diagnostics/price list are recorded on the side.
+    """
+
+    def __init__(
+        self,
+        alpha: float = 1.0,
+        beta: float = 0.0,
+        temp: float = 1.0,
+        qgroup: str = "all",
+        n_state_tokens: int = 1,
+        schedule: Optional[tuple] = None,
+        adaptive: bool = False,
+        norm: str = "l2",
+        block_idx: int = -1,
+    ) -> None:
+        if qgroup not in _VALID_QGROUPS:
+            raise ValueError(f"qgroup must be one of {_VALID_QGROUPS}, got {qgroup!r}")
+        validate_hopfield(alpha, beta, temp, adaptive, norm, schedule, probe=HOP.probe)
+        self.alpha, self.beta, self.temp = float(alpha), float(beta), float(temp)
+        self.qgroup, self.n_state_tokens = qgroup, int(n_state_tokens)
+        self.schedule = parse_schedule(schedule)
+        self.adaptive, self.norm = bool(adaptive), norm
+        self.block_idx = int(block_idx)
+
+    def _beta_now(self, step) -> float:
+        """Effective injection strength at the denoising step in flight (cf. _lambda_now)."""
+        if self.schedule is None:
+            return self.beta
+        if step is None:
+            raise RuntimeError(
+                "Hopfield step schedule is armed but no denoising-step index was observed "
+                f"— the DiT forward pre-hook did not fire, so schedule="
+                f"{fmt_schedule(self.schedule)} cannot be enforced."
+            )
+        if step >= len(self.schedule):
+            raise RuntimeError(
+                f"denoising step {step} has no weight in Hopfield schedule "
+                f"{fmt_schedule(self.schedule)} (len={len(self.schedule)}) — "
+                f"num_inference_timesteps changed after install."
+            )
+        return self.beta * self.schedule[step]
+
+    def __call__(
+        self,
+        attn,
+        hidden_states: torch.Tensor,
+        encoder_hidden_states: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        temb: Optional[torch.Tensor] = None,
+        *args,
+        **kwargs,
+    ) -> torch.Tensor:
+        if encoder_hidden_states is not None or attention_mask is not None:
+            # A square cross block would "work" silently with a meaningless transpose;
+            # the decomposition is defined only for keys == queries (loci.md §1.1).
+            raise RuntimeError(
+                f"HopfieldAttnProcessor (block {self.block_idx}) received a cross-attention "
+                f"call (encoder_hidden_states/attention_mask set): the sym/skew "
+                f"decomposition needs QK^T square with keys == queries — install it on the "
+                f"odd self-attention blocks only."
+            )
+        residual = hidden_states
+        if attn.spatial_norm is not None:
+            hidden_states = attn.spatial_norm(hidden_states, temb)
+
+        input_ndim = hidden_states.ndim
+        if input_ndim == 4:
+            batch_size, channel, height, width = hidden_states.shape
+            hidden_states = hidden_states.view(batch_size, channel, height * width).transpose(1, 2)
+
+        batch_size = hidden_states.shape[0]
+        if attn.group_norm is not None:
+            hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2)
+
+        query = attn.to_q(hidden_states)
+        key = attn.to_k(hidden_states)
+        value = attn.to_v(hidden_states)
+
+        inner_dim = key.shape[-1]
+        head_dim = inner_dim // attn.heads
+
+        query = query.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        key = key.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+        value = value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
+
+        if attn.norm_q is not None:
+            query = attn.norm_q(query)
+        if attn.norm_k is not None:
+            key = attn.norm_k(key)
+
+        # --- Hopfield circulation control in place of scaled_dot_product_attention ---
+        step = SCHED.current
+        cell = (step, self.block_idx)
+        beta_now = self._beta_now(step)
+        if beta_now == 0.0 and not HOP.probe:
+            # Fused path, byte-for-byte the call AttnProcessor2_0 makes: beta=0 and
+            # every zero-weight schedule step are bit-identical to vanilla.
+            HOP.record_delivery(cell, applied=False)
+            hidden_states = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
+            )
+        else:
+            hidden_states = self._core(query, key, value, hidden_states, cell, beta_now)
+        # ------------------------------------------------------------------------------
+
+        hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
+        hidden_states = hidden_states.to(query.dtype)
+
+        hidden_states = attn.to_out[0](hidden_states)
+        hidden_states = attn.to_out[1](hidden_states)
+
+        if input_ndim == 4:
+            hidden_states = hidden_states.transpose(-1, -2).reshape(batch_size, channel, height, width)
+
+        if attn.residual_connection:
+            hidden_states = hidden_states + residual
+
+        hidden_states = hidden_states / attn.rescale_output_factor
+        return hidden_states
+
+    def _core(self, query, key, value, x, cell, beta_now: float) -> torch.Tensor:
+        # Logits exactly as the PLADIS branch forms them (bf16 matmul, then f32);
+        # transpose and 0.5*(L - L^T) are exact in f32.
+        scale_factor = 1.0 / math.sqrt(query.size(-1))
+        logits = torch.matmul(query, key.transpose(-2, -1)) * scale_factor
+        logits = logits.float()
+        if logits.shape[-1] != logits.shape[-2]:
+            raise RuntimeError(
+                f"Hopfield block {self.block_idx}: logits are {tuple(logits.shape[-2:])}, "
+                f"not square — keys and queries differ, the decomposition is undefined."
+            )
+        skew = 0.5 * (logits - logits.transpose(-2, -1))
+        dense = torch.softmax(logits, dim=-1)
+        # Z_d in the SAME expression as the NAG branch (:692): one numeric
+        # convention for both output-space stages.
+        z_d = torch.matmul(dense.to(value.dtype), value)
+
+        if HOP.probe:
+            fused = F.scaled_dot_product_attention(
+                query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False
+            )
+            HOP.record_delivery(cell, applied=True)
+            self._measure(logits, skew, dense, value, x, z_d, fused, cell)
+            return fused
+
+        eta_bar = None
+        if self.adaptive or HOP.record_episode:
+            eta = _eta(logits, skew)  # (B, H)
+            eta_bar = eta.mean()  # 0-dim tensor: no .item() on the arm path (docs/hopfield.md §3)
+            if HOP.record_episode:
+                HOP.record_eta(cell, eta)
+
+        if self.temp != 1.0:
+            la = self.temp * logits
+        elif self.alpha == 1.0:
+            la = logits  # exact identity -> Z_a == Z_d bitwise: the eager-dense control
+        elif self.adaptive:
+            la = logits + ((self.alpha - 1.0) * eta_bar) * skew  # Eq. 38-39
+        else:
+            la = logits + (self.alpha - 1.0) * skew
+        z_a = torch.matmul(torch.softmax(la, dim=-1).to(value.dtype), value)
+
+        beta_eff = beta_now * (1.0 - eta_bar) if self.adaptive else beta_now  # Eq. 41
+        zb = z_d.float() + beta_eff * (z_a.float() - z_d.float())
+        raw_ratio = None
+        if self.norm == "l2":
+            # Reference code: match to the PERTURBED retrieval's norm (Alg. 2, ref = ||Hx||).
+            ref = _row_norm(z_a.float()).clamp_min(_HOP_EPS)
+            cur = _row_norm(zb).clamp_min(_HOP_EPS)
+            raw_ratio = ref / cur
+            zb = zb * raw_ratio.clamp(_HOP_R_MIN, _HOP_R_MAX)
+        HOP.record_delivery(cell, applied=True)
+        if HOP.record_episode:
+            HOP.record_arm(cell, raw_ratio, beta_eff)
+        out = zb.to(value.dtype)
+        # Query rows outside the group take Z_d, selected AFTER the norm-match, so
+        # they are bit-identical to the dense output (the :694-702 pattern).
+        ns = _split_point(self.qgroup, self.n_state_tokens, out.shape[-2])
+        if ns is not None:
+            if self.qgroup == "state":
+                out = torch.cat([out[..., :ns, :], z_d[..., ns:, :]], dim=-2)
+            else:  # action
+                out = torch.cat([z_d[..., :ns, :], out[..., ns:, :]], dim=-2)
+        return out
+
+    @staticmethod
+    def _measure(logits, skew, dense, value, x, z_d, fused, cell) -> None:
+        """Probe mode: the paper's diagnostics on Xi = P X, plus the price list."""
+        HOP.record_eta(cell, _eta(logits, skew))
+        # Xi = P X per head over the block's INPUT features (paper Eq. 14, 1536-wide);
+        # columns xi in R^L; local field h = L_sym xi (Eq. 25); lambda = xi (.) h (Eq. 26).
+        xf = x.detach().float().unsqueeze(1)  # (B, 1, L, D_in)
+        xi = torch.matmul(dense, xf)  # (B, H, L, D_in)
+        lsym = 0.5 * (logits + logits.transpose(-2, -1))
+        h = torch.matmul(lsym, xi)
+        lam = xi * h
+        E = -0.5 * lam.sum(dim=-2)  # (B, H, D_in), Eq. 27
+        r = (lam < 0).float().mean(dim=-2)  # Eq. 28
+        align = lam.sum(dim=-2) / (
+            torch.linalg.vector_norm(xi, dim=-2) * torch.linalg.vector_norm(h, dim=-2)
+        ).clamp_min(_HOP_EPS)  # Eq. 29
+        HOP.record_diag(cell, E, r, align)
+
+        zd_f = z_d.float()
+        zd_norm = _row_norm(zd_f).clamp_min(_HOP_EPS)
+        HOP.record_floor(cell, _row_norm(fused.float() - zd_f) / zd_norm)
+        for kind, grid in (("alpha", HOP_ALPHA_GRID), ("temp", HOP_TEMP_GRID)):
+            for v in grid:
+                la = logits + (v - 1.0) * skew if kind == "alpha" else v * logits
+                # the exact expression the arm path uses for Z_a, so the priced
+                # displacement IS the arm's (gate H of verify_hopfield.py)
+                z_c = torch.matmul(torch.softmax(la, dim=-1).to(value.dtype), value).float()
+                delta = z_c - zd_f
+                disp = _row_norm(delta) / zd_norm
+                ref = _row_norm(z_c).clamp_min(_HOP_EPS)
+                lo, hi = {}, {}
+                for b in HOP_BETA_GRID:
+                    ratio = ref / _row_norm(zd_f + b * delta).clamp_min(_HOP_EPS)
+                    lo_hi = torch.stack([(ratio < _HOP_R_MIN).sum(), (ratio > _HOP_R_MAX).sum()]).tolist()
+                    lo[b], hi[b] = int(lo_hi[0]), int(lo_hi[1])
+                HOP.record_price(cell + (kind, v), disp, lo, hi)
+
+
+def self_block_indices(dit) -> List[int]:
+    """Odd (self-attention) block indices of the AlternateVLDiT (dit.py:380-388)."""
+    n = len(dit.transformer_blocks)
+    odd = [i for i in range(n) if i % 2 == 1]
+    if not odd:
+        raise ValueError(f"DiT has {n} block(s) and no odd (self-attention) block.")
+    return odd
+
+
+def install_hopfield(
+    model,
+    alpha: float = 1.0,
+    beta: float = 0.0,
+    temp: float = 1.0,
+    qgroup: str = "all",
+    n_state_tokens: int = 1,
+    schedule=None,
+    adaptive: bool = False,
+    norm: str = "l2",
+    blocks: Optional[List[int]] = None,
+) -> List[int]:
+    """Install HopfieldAttnProcessor on the odd (self) blocks; returns the block idxs.
+
+    Reads ``HOP.probe`` (set BEFORE install, like NAG.probe). Coexists with
+    install_pladis on the even blocks: the block sets are disjoint and the step
+    probe is installed once per DiT. Raises on every configuration that would be
+    vanilla under an intervention's name (docs/hopfield.md §4).
+    """
+    dit = _find_alternate_dit(model)
+    notice = validate_hopfield(alpha, beta, temp, adaptive, norm, schedule, probe=HOP.probe)
+    sched = parse_schedule(schedule)
+    # N is needed for the per-step delivery census even without a schedule.
+    head = _find_action_head(model)
+    n_steps = int(head.num_inference_timesteps)
+    if sched is not None:
+        if len(sched) != n_steps:
+            raise ValueError(
+                f"Hopfield step schedule {fmt_schedule(sched)} has {len(sched)} weights but "
+                f"the head runs N={n_steps} denoising steps — one weight per step is required."
+            )
+        if all(float(beta) * w == 0.0 for w in sched):
+            raise ValueError(
+                f"Hopfield schedule {fmt_schedule(sched)} at beta={beta:g} gives beta=0 at "
+                f"every step — this arm would be bit-identical to vanilla."
+            )
+    _install_step_probe(dit, head)  # idempotent (:781); shared with install_pladis
+
+    if blocks is None:
+        blocks = self_block_indices(dit)
+    even = [i for i in blocks if i % 2 == 0]
+    if even:
+        raise ValueError(
+            f"Hopfield blocks {even} are even (cross-attention) indices: the decomposition "
+            f"is undefined there (keys are VLM tokens). Odd blocks only."
+        )
+    n = len(dit.transformer_blocks)
+    bad = [i for i in blocks if not 0 <= i < n]
+    if bad:
+        raise ValueError(f"Hopfield blocks {bad} outside the DiT's {n} blocks.")
+    for i in blocks:
+        if isinstance(getattr(dit.transformer_blocks[i].attn1, "processor", None), PLADISAttnProcessor):
+            raise ValueError(
+                f"block {i} already carries a PLADISAttnProcessor — the two processors must "
+                f"live on disjoint block sets (PLADIS even/cross, Hopfield odd/self)."
+            )
+    HOP.arm(alpha, beta, temp, adaptive, norm, qgroup, sched, n_steps, blocks)
+    installed = []
+    for i in blocks:
+        dit.transformer_blocks[i].attn1.set_processor(
+            HopfieldAttnProcessor(
+                alpha=alpha, beta=beta, temp=temp, qgroup=qgroup,
+                n_state_tokens=n_state_tokens, schedule=sched, adaptive=adaptive,
+                norm=norm, block_idx=i,
+            )
+        )
+        installed.append(i)
+    if not installed:
+        raise RuntimeError("Hopfield install selected no blocks — this arm would be vanilla.")
+    what = "probe" if HOP.probe else fmt_hop(alpha, beta, qgroup, n_state_tokens, temp,
+                                              sched, adaptive, norm)
+    msg = (f"[HOP] installed on blocks {installed} (hop={what}, "
+           f"n_layers={n}, N={n_steps})")
+    if notice:
+        msg += "\n" + notice
+    print(msg, flush=True)
+    print(msg, file=sys.stderr, flush=True)
+    return installed

@@ -925,6 +925,23 @@ def load_rstats_sb(prefix, arm):
     return out
 
 
+def load_hopstats(prefix, arm):
+    """Per-episode Hopfield census rows for an arm, keyed (suite, episode); {} if none.
+
+    Written by eval_arm next to the eplog (`<out>.hopstats.tsv`) for every --hop-*
+    arm (eta, clamp rates, realized beta_eff) and every --hop-probe run (plus E, r,
+    Align and the alpha/temperature price list). Missing files are normal.
+    """
+    rows = {}
+    for s_ in SUITES:
+        p = SWEEP / f"{prefix}_{arm}_{s_}_eplog.tsv.hopstats.tsv"
+        if not p.exists():
+            continue
+        for r in csv.DictReader(open(p), delimiter="\t"):
+            rows[(s_, int(r["episode"]))] = {k: float(v) for k, v in r.items()}
+    return rows
+
+
 def _mean_se(xs):
     n = len(xs)
     if n < 2:
@@ -1001,6 +1018,49 @@ def rstats_section(prefix, arms, data):
         print(f"  {a}:")
         print("     step  " + "  ".join(f"{k}: {fmt(v)}" for k, v in sorted(by_step.items())))
         print("     block " + "  ".join(f"{k}: {fmt(v)}" for k, v in sorted(by_block.items())))
+
+
+def hopstats_section(prefix, arms, data):
+    """The Hopfield census (docs/hopfield.md §5.1 endpoint 5): do failing episodes
+    sit at lower Align / higher instability than successes, and does a hop arm's
+    realized clamp rate / beta_eff differ by outcome? Welch z on the outcome split,
+    as in rstats_section. Probe runs are listed too (they carry E/r/Align)."""
+    have = {a: load_hopstats(prefix, a) for a in arms}
+    have = {a: r for a, r in have.items() if r}
+    if not have:
+        return
+    print("\n== Hopfield census: eta (symmetry index), E / r / Align of the baseline "
+          "retrieval, norm-match clamp rate, realized beta_eff — per-episode summaries pooled ==")
+    print(f"  {'arm':22s} {'eps':>5s} {'eta':>7s} {'eta_p10':>7s} {'E':>9s} {'r':>6s} "
+          f"{'Align':>7s} {'clamp':>11s} {'beta_eff':>8s}")
+    for a, rows in have.items():
+        vals = list(rows.values())
+        n = len(vals)
+        mean = lambda k: sum(v[k] for v in vals if v[k] == v[k]) / max(1, sum(1 for v in vals if v[k] == v[k]))
+        clamp = f"{mean('clamp_lo_rate'):5.1%}/{mean('clamp_hi_rate'):5.1%}" \
+            if any(v["clamp_lo_rate"] == v["clamp_lo_rate"] for v in vals) else "        off"
+        print(f"  {a:22s} {n:5d} {mean('eta_mean'):+7.3f} {mean('eta_p10'):+7.3f} {mean('E_mean'):+9.3g} "
+              f"{mean('r_mean'):6.3f} {mean('align_mean'):+7.3f} {clamp:>11s} {mean('beta_eff_mean'):8.3f}")
+
+    print("\n  -- by outcome (success vs fail), per arm --")
+    for a, rows in have.items():
+        succ = [v for v in rows.values() if v["success_once"] == 1]
+        fail = [v for v in rows.values() if v["success_once"] == 0]
+        if len(succ) < 2 or len(fail) < 2:
+            print(f"  {a:22s} outcome split not available ({len(succ)} succ / {len(fail)} fail)")
+            continue
+        for key, label in (("eta_mean", "eta"), ("align_mean", "Align"), ("r_mean", "r"),
+                           ("E_mean", "E"), ("clamp_hi_rate", "clamp_hi"), ("beta_eff_mean", "beta_eff")):
+            s_ = [v[key] for v in succ if v[key] == v[key]]
+            f_ = [v[key] for v in fail if v[key] == v[key]]
+            if len(s_) < 2 or len(f_) < 2:
+                continue
+            ms, ses = _mean_se(s_)
+            mf, sef = _mean_se(f_)
+            se = math.sqrt(ses ** 2 + sef ** 2)
+            z = (mf - ms) / se if se else 0.0
+            print(f"  {a:22s} {label:9s} succ {ms:+9.4f} (n={len(s_)})  fail {mf:+9.4f} (n={len(f_)})"
+                  f"  fail-succ {mf - ms:+.4f}  z={z:+5.2f}")
 
 
 def load(prefix, arm):
@@ -1221,6 +1281,7 @@ def main():
                       f"  z={z:+5.2f}  p={p:.4g}")
 
     rstats_section(prefix, arms, data)
+    hopstats_section(prefix, arms, data)
 
     # Severity needs the axis=none reference sweep of the SAME model. Guarded rather than
     # assumed: without the guard a missing file makes the whole analysis unusable until

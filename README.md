@@ -132,6 +132,48 @@ own two features, `verify_nag.py` gate H) and reports the clip rate per candidat
 τ, per denoising step and per block. `docs/nag.md` states the selection rule and
 what each outcome would mean.
 
+### 1.2.2 The self-attention locus: Hopfield circulation control (N1.7 only)
+
+§1.2 intervenes on the **even** blocks only. The **odd** blocks self-attend
+over the same `[state; action]` sequence with no mask
+(`dit.py:380-388`), so their per-head logits `L = QKᵀ/√d` are square with
+keys = queries — the setting of the symmetric/skew decomposition of Cho, Han
+& Jin (ICML 2026): `L_sym = (L+Lᵀ)/2` is a Hopfield energy over the tokens,
+`L_skew = (L−Lᵀ)/2` a circulation that leaves the energy untouched. The
+second processor (`HopfieldAttnProcessor`, same module) scales the
+circulation and blends the result back, following the reference code's
+norm-match:
+
+```
+L_α   = L + (α−1)·L_skew                 # ≡ L_sym + α·L_skew; α=1 → L bitwise
+Z     = softmax(L)·V,   Z_α = softmax(L_α)·V
+Z_b   = Z + β·(Z_α − Z)
+Z_out = Z_b · clamp(‖Z_α‖₂ / ‖Z_b‖₂, 0.25, 4)     per (batch, head, query row)
+```
+
+| axis | values | mechanism |
+|---|---|---|
+| circulation (`--hop-alpha`) | α (1 = unchanged) | skew scale; α<1 damps, α>1 injects |
+| injection (`--hop-beta`) | β ≥ 0 (0 = fused path) | blend strength; β=0 and zero-weight steps are bit-identical to vanilla |
+| temperature control (`--hop-temp`) | τ (requires α=1) | `Z_α = softmax(τ·L)·V` through the same blend/norm-match — the paper's Fig. 9 control |
+| query group / step schedule (`--hop-qgroup`, `--hop-schedule`) | as §1.2 | rows outside the group keep `Z`; the schedule multiplies β per step |
+| adaptive (`--hop-adaptive`) | flag | `α_eff = (α−1)·η̄`, `β_eff = β(1−η̄)` from the realized symmetry index η̄ per attention call (paper Eq. 36–42) |
+| norm-match (`--hop-norm`) | `l2` (default) / `off` | the reference rescale, or none |
+| probe (`--hop-probe`) | flag | fused (vanilla-identical) rollout; records η, E, r, Align on `Ξ = P·X` and prices the α/τ grid per episode (`<out>.hopstats*.tsv`) |
+
+Two identities the gates enforce: β=0 is the fused SDPA call (bit-identical
+to vanilla), and α=1 with β>0 is bit-identical to the manual dense path —
+the odd-block **eager-dense control** (`hop-dense`), which no collected arm
+has run. The two processors sit on disjoint block sets, so a combined arm is
+the union of `--pladis-*` and `--hop-*`. The first-order dose is
+`δ = β(α−1)`; β=1 arms are un-normalized α-retrievals (the ratio is
+identically 1), β≠1 arms are normalized. `docs/hopfield.md` states the
+algebra, the phase-0 measurement (`experiments/diag_hopfield.py`) that fixes
+α and τ from the model's own displacement rather than the paper's SDXL
+values, the arms, and the outcomes named in advance; `docs/loci.md` §1.1 and
+§5 record the locus and the one registered deviation (norm-match on `Z`
+rather than on `Ξ`).
+
 ### 1.3 Intervention loci in π0.5
 
 π0.5 has **no cross-attention module**. Its action ("suffix") tokens attend
@@ -206,6 +248,10 @@ corresponds to the **action row** of the 2×2 grid of §1.2, extended along λ.
 | temperature control | `--pladis-scale 1.0 --pladis-method softmax --pladis-beta β` | sharpened-softmax counterpart to a sparse cell |
 | step-scheduled cell | `--pladis-scale λ --pladis-qgroup … --pladis-kind … --pladis-schedule 1,1,0,0` | a locus cell with a per-step λ profile, λ_i = λ·w_i (§1.2); its all-steps parent and its same-Σw mirror are the paired references |
 | NAG-capped cell | `--pladis-scale λ --pladis-qgroup … --pladis-kind … --pladis-nag-tau τ` | a locus cell whose per-query output magnitude is bounded at τ× the dense branch (§1.2.1); the paired reference is the **same cell without the cap**, so the contrast carries no dose confound |
+| `hop-dense` | `--hop-install --hop-alpha 1 --hop-beta 1` | the odd-block eager-dense control (§1.2.2): bit-identical to the manual dense path, carries only the fused-vs-eager term of the self blocks |
+| Hopfield cell | `--hop-install --hop-alpha α --hop-beta β [--hop-norm off] [--hop-adaptive]` | circulation control on the self blocks; reads against `hop-dense` (numeric-path-matched) and vanilla |
+| Hopfield temperature control | `--hop-install --hop-temp τ --hop-beta 1` | the paper's global-temperature control through the same blend, matched in displacement to a Hopfield cell |
+| combined cell | `--pladis-* … --hop-* …` | cross-block PLADIS + self-block Hopfield in one pass (disjoint block sets) |
 
 **The control arms differ between tracks, and not arbitrarily.** GR00T's vanilla
 runs fused SDPA while λ>0 must materialize weights on an eager path, so `base0`
@@ -295,7 +341,8 @@ goes back in` clause is why check (c) measures rather than assumes.
 pladis/        attention hooks
   attn_gr00t_n17.py        weight-space hook (faithful to the official PLADIS
                        code path: eager blend at λ>0, native fused SDPA at
-                       λ=0); qgroup/kind/cells gating
+                       λ=0); qgroup/kind/cells gating; + HopfieldAttnProcessor
+                       for the odd/self blocks (§1.2.2), sharing the step probe
   attn_pi05.py         π0.5 joint-attention hook (FLUX-style: sharpen ONE key
                        sub-block, mass-preserving); explicit-flag
                        install_pladis() + assert_delivered() (§1.3)
@@ -330,6 +377,9 @@ experiments/   entry points
                        one suite per GPU (§6.2)
   verify_*.py          verification gates (§5)
   diag_pi05_support.py entmax support-size measurement (§5 gate 5c)
+  diag_nag.py          NAG ratio census — τ selection (docs/nag.md §6)
+  diag_hopfield.py     Hopfield phase 0 — η/E/r/Align + the α/τ price list on a
+                       vanilla rollout (docs/hopfield.md §6)
   smoke_model.py       GPU smoke test (registry-driven, --model)
   smoke_pi05.py        GPU smoke + instruction delivery asserted at the tokenizer
 scripts/       externals.lock (pinned sibling-checkout SHAs) + clone_externals.sh
@@ -403,6 +453,18 @@ machine or after dependency changes, run in order:
    all-zero, conflicting and unresolvable schedules raise; `assert_delivered()`
    catches a never-fired probe and a weighted step the loop never reaches. Needs
    no checkpoint and no GPU.
+4c. **Hopfield gate (CPU)** — `verify_hopfield.py` (docs/hopfield.md §8): β=0,
+   zero-weight steps and the probe are `torch.equal` to `AttnProcessor2_0`;
+   α=1 with β>0 is `torch.equal` to the manual dense path (the eager-dense
+   control); the decomposition identities hold on the processor's own logits;
+   rows outside the qgroup stay bit-exact; weighted steps equal an
+   unscheduled processor at β·w; every rejected setting raises and
+   PLADIS(even) + Hopfield(odd) install together with one step pre-hook;
+   the delivery census catches never-fired / unreached / missing-cell /
+   zero-weight-step failures; the probe's η, E, r, Align match a float64
+   reference and its priced α/τ grid equals processors actually run there.
+   `verify_base0_parity.py` adds the β=0 self case at N1.7 shapes on the GPU
+   and asserts the processor refuses both cross cases.
 5. **π0.5 hook smoke (CPU)** — `verify_pi05_hook.py`: λ=0 and prefix passes
    bit-identical to stock gemma eager attention; kind blend ≡ the official
    FLUX mass-preserving formulation; row/block-mass preservation; β=1
@@ -523,6 +585,7 @@ bash experiments/run.sh experiments/eval_arm.py \
 | `--pladis-n-state-tokens` | leading state query rows (N1.7: 1); defines the `state`/`action` split |
 | `--pladis-schedule` | N1.7 only: per-denoising-step multiplier on λ (`all` default, or one weight per step, e.g. `1,1,0,0` / `0,0.5,1,1.5`). Zero-weight steps run vanilla, so this is the **time** coordinate of the locus (§1.2) |
 | `--pladis-nag-tau` / `--pladis-nag-rho` | N1.7 only: NAG magnitude cap and refinement (§1.2.1). Off by default and bit-identical to the pre-NAG path when off; ρ<1 without a τ is rejected (it is the plain arm at `ρ·λ`) |
+| `--hop-install` + `--hop-alpha` / `--hop-beta` / `--hop-temp` / `--hop-qgroup` / `--hop-schedule` / `--hop-adaptive` / `--hop-norm` / `--hop-probe` | N1.7 only: Hopfield circulation control on the odd/self blocks (§1.2.2). Independent of `--pladis-*` (disjoint blocks); β=0 is bit-identical to vanilla; dead-flag combinations (β=0 with anything else, τ with α, probe with an intervention) are rejected before the model loads |
 | `--model` | `gr00t_n17` (default) or `pi05`; selects the loader **and** the hook |
 
 The same evaluator runs the π0.5 track:

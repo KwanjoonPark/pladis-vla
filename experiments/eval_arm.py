@@ -79,6 +79,18 @@ _NAG_TRACK_MSG = (
     "sub-block by its dense row mass — stacking a feature-magnitude cap on a "
     "probability-mass one needs its own derivation (docs/nag.md §1), not a port."
 )
+_HOP_TRACK_MSG = (
+    "[arm] --hop-* is gr00t_n17-only: the Hopfield sym/skew control needs a square "
+    "self-attention block (queries == keys, docs/loci.md §1.1); the pi05/smolvla hooks "
+    "carry no such processor (their action-action span sits inside a joint row)."
+)
+_HOP_DEFAULTS = dict(hop_alpha=1.0, hop_beta=0.0, hop_temp=1.0, hop_qgroup="all",
+                     hop_schedule="all", hop_adaptive=False, hop_norm="l2", hop_probe=False)
+
+
+def _hop_nondefault(args) -> list:
+    """Names of the --hop-* value flags that differ from their defaults."""
+    return [k for k, d in _HOP_DEFAULTS.items() if getattr(args, k) != d]
 
 
 def parse_args():
@@ -171,6 +183,38 @@ def parse_args():
                         "denoising step x block). Any --pladis-nag-tau arm records the "
                         "same files automatically (pre-cap R). Mutually exclusive with "
                         "--pladis-nag-tau; needs --pladis-install and scale > 0")
+    # Hopfield circulation control on the ODD (self-attention) blocks — gr00t_n17
+    # only (docs/hopfield.md §4). Independent of --pladis-*: the two processors
+    # live on disjoint block sets, so a combined arm is the union of both flag sets.
+    p.add_argument("--hop-install", action="store_true",
+                   help="gr00t_n17 only: install HopfieldAttnProcessor on the odd (self) "
+                        "blocks. Z_out = norm_match(Z + beta*(Z_alpha - Z)) with "
+                        "Z_alpha = softmax(L + (alpha-1)*L_skew) V (docs/hopfield.md §1)")
+    p.add_argument("--hop-alpha", type=float, default=1.0,
+                   help="skew (circulation) scale alpha; 1 = unchanged logits")
+    p.add_argument("--hop-beta", type=float, default=0.0,
+                   help="injection strength beta; 0 (default) = fused path, bit-identical "
+                        "to vanilla. alpha=1 with beta>0 is the odd-block EAGER-DENSE control")
+    p.add_argument("--hop-temp", type=float, default=1.0,
+                   help="temperature control: Z_alpha = softmax(temp*L) V through the same "
+                        "blend and norm-match (paper Fig. 9); requires --hop-alpha 1")
+    p.add_argument("--hop-qgroup", default="all", choices=["all", "state", "action"],
+                   help="query rows the blend is written to; the rest keep the dense Z")
+    p.add_argument("--hop-schedule", default="all",
+                   help="per-denoising-step MULTIPLIER on --hop-beta, one weight per step "
+                        "('0,0,1,1'); zero-weight steps take the fused path")
+    p.add_argument("--hop-adaptive", action="store_true",
+                   help="eta-adaptive control (paper Eq. 36-42): alpha_eff = (alpha-1)*eta_bar, "
+                        "beta_eff = beta*(1-eta_bar) per attention call")
+    p.add_argument("--hop-norm", default="l2", choices=["l2", "off"],
+                   help="norm-match of the blend to ||Z_alpha|| with clamp [0.25, 4] "
+                        "(reference code, default) or none")
+    p.add_argument("--hop-probe", action="store_true",
+                   help="measurement only: fused (vanilla-identical) rollout, with the "
+                        "Hopfield diagnostics (eta, E, r, Align) and the alpha/temperature "
+                        "price list recorded per episode to <out>.hopstats.tsv and "
+                        "<out>.hopstats_sb.tsv. Needs --hop-install and every other "
+                        "--hop-* at its default")
     # pi0.5 key-axis geometry: [image(0:ni) | language(ni:ni+nl) | suffix]. Defaults are
     # the real pi05_libero layout — 3 image slots x 256 + max_token_len 200 = 968 prefix,
     # suffix = action_horizon 10. Re-validated against the live key_len at run time
@@ -229,6 +273,28 @@ def parse_args():
     # locus flags do not mean what the operator thinks must never consume a sweep.
     # (Kinds outside a hook's own set are rejected by that hook at install.)
     _SMOLVLA_GEOM_DEFAULTS = (128, 48)
+    if args.model != "gr00t_n17" and (args.hop_install or _hop_nondefault(args)):
+        raise SystemExit(_HOP_TRACK_MSG)
+    if args.model == "gr00t_n17":
+        hop_extra = _hop_nondefault(args)
+        if hop_extra and not args.hop_install:
+            raise SystemExit(
+                f"[arm] --{'/--'.join(k.replace('_', '-') for k in hop_extra)} without "
+                f"--hop-install: a Hopfield setting with no processor is a vanilla arm "
+                f"wearing an intervention's name."
+            )
+        if args.hop_install:
+            # Same two-layer discipline as validate_nag: the hook re-runs this at
+            # install; here it costs a second instead of a suite's worth of startup.
+            from pladis.attn_gr00t_n17 import parse_schedule, validate_hopfield
+
+            try:
+                parse_schedule(args.hop_schedule)
+                validate_hopfield(args.hop_alpha, args.hop_beta, args.hop_temp,
+                                  args.hop_adaptive, args.hop_norm, args.hop_schedule,
+                                  probe=args.hop_probe)
+            except ValueError as exc:
+                raise SystemExit(f"[arm] --hop-*: {exc}")
     if args.model == "pi05":
         if args.pladis_kind in ("cams", "text-image", "state", "self"):
             raise SystemExit(
@@ -496,7 +562,44 @@ def _fmt(v) -> str:
     return f"{v:.6g}" if isinstance(v, float) else str(v)
 
 
-def _assert_n17_delivery(sess, ts, first_spec, model, *, schedule: bool, nag: bool) -> None:
+class _HopStatsWriter:
+    """Per-episode Hopfield census, as two TSV sidecars of the eplog (docs/hopfield.md §4).
+
+    ``<out>.hopstats.tsv``    one row per episode: outcome + eta (mean/quantiles/min),
+                              E / r / Align of the baseline retrieval (probe), clamp
+                              rates and realized beta_eff (arm), fused-vs-eager floor
+                              and the alpha/temperature price list (probe).
+    ``<out>.hopstats_sb.tsv`` one row per (episode, denoising step, block).
+
+    Same construction as _RStatsWriter: keyed by episode, the eplog schema untouched;
+    the column lists are owned by the census so writer and hook cannot drift apart.
+    """
+
+    def __init__(self, out: str) -> None:
+        from pladis.attn_gr00t_n17 import HOP_ROW_COLS, HOP_SUMMARY_COLS
+
+        self.cols = ["episode", "success_once"] + list(HOP_SUMMARY_COLS)
+        self.cols_sb = ["episode", "success_once"] + list(HOP_ROW_COLS)
+        self.f = _RStatsWriter._open(out + ".hopstats.tsv", self.cols)
+        self.f_sb = _RStatsWriter._open(out + ".hopstats_sb.tsv", self.cols_sb)
+
+    def write(self, episode: int, success: int, summary: dict, rows: list) -> None:
+        if not summary:
+            raise RuntimeError(
+                f"episode {episode}: the Hopfield census saw no attention call — the "
+                f"rollout did not go through the processor."
+            )
+        vals = {"episode": episode, "success_once": success, **summary}
+        self.f.write("\t".join(_fmt(vals[c]) for c in self.cols) + "\n")
+        for row in rows:
+            v = {"episode": episode, "success_once": success, **row}
+            self.f_sb.write("\t".join(_fmt(v[c]) for c in self.cols_sb) + "\n")
+        self.f.flush()
+        self.f_sb.flush()
+
+
+def _assert_n17_delivery(sess, ts, first_spec, model, *, schedule: bool, nag: bool,
+                         hop: bool = False) -> None:
     """gr00t_n17 counterpart of the pi05/smolvla warm-ups: prove the run-time-enforced
     parts of the arm actually fire, BEFORE logging an episode.
 
@@ -524,7 +627,11 @@ def _assert_n17_delivery(sess, ts, first_spec, model, *, schedule: bool, nag: bo
     for real when the loop starts, so the logged rollout is bit-identical to one
     without the warm-up.
     """
-    from pladis.attn_gr00t_n17 import assert_delivered, assert_nag_delivered
+    from pladis.attn_gr00t_n17 import (
+        assert_delivered,
+        assert_hopfield_delivered,
+        assert_nag_delivered,
+    )
 
     raw_obs, instruction = sess.reset(first_spec, ts.init_states_of(first_spec.task_name))
     with torch.no_grad():
@@ -533,6 +640,11 @@ def _assert_n17_delivery(sess, ts, first_spec, model, *, schedule: bool, nag: bo
         print(f"[arm] PLADIS step schedule delivered: {assert_delivered()}", flush=True)
     if nag:
         print(f"[arm] NAG delivered: {assert_nag_delivered()}", flush=True)
+    if hop:
+        # For --hop-*: prove every (active step, odd block) cell ran through the
+        # Hopfield processor (docs/hopfield.md §8). A probe bound to a DiT the serving
+        # path never calls would otherwise log 1,537 episodes under a hop signature.
+        print(f"[arm] Hopfield delivered: {assert_hopfield_delivered()}", flush=True)
 
 
 def main():
@@ -610,6 +722,20 @@ def main():
             + nag_clause
         )
 
+    # Hopfield clause: a NEW signature element, emitted ONLY under --hop-install —
+    # the same append-only discipline as steps_clause/nag_clause, so every eplog on
+    # this track written before the self-block row keeps a byte-identical
+    # signature. A probe is numerically vanilla but gets its own ledger on purpose
+    # (under the vanilla signature a collected arm resumes as a no-op and no
+    # diagnostic would ever be written).
+    hop_elems = []
+    if args.hop_install:
+        from pladis.attn_gr00t_n17 import fmt_hop, parse_schedule
+
+        hop_elems = ["hop=probe" if args.hop_probe else "hop=" + fmt_hop(
+            args.hop_alpha, args.hop_beta, args.hop_qgroup, args.pladis_n_state_tokens,
+            args.hop_temp, parse_schedule(args.hop_schedule), args.hop_adaptive, args.hop_norm)]
+
     arm_signature = "|".join(
         [
             f"suite={args.suite}",
@@ -627,6 +753,7 @@ def main():
             f"max_steps={args.max_steps}",
             f"exec_horizon={args.exec_horizon}",
             pladis_clause,
+            *hop_elems,
             # emitted only when non-default, so every eplog written before the flag
             # existed keeps its byte-identical signature and still resumes — the same
             # append-only discipline as pi05's backend_clause above.
@@ -726,8 +853,29 @@ def main():
                 nag_rho=args.pladis_nag_rho,
             )
         print(f"[arm] PLADIS installed on blocks {installed}", flush=True)
-    else:
+    elif not args.hop_install:
         print("[arm] vanilla (no hook)", flush=True)
+    if args.hop_install:
+        from pladis.attn_gr00t_n17 import HOP, install_hopfield
+
+        # Armed BEFORE install (install_hopfield reads HOP.probe). Every hop arm
+        # records its per-episode census — eta, clamp events, realized beta_eff —
+        # the way every NAG arm records R; the probe additionally records the
+        # paper's diagnostics and the price list.
+        HOP.probe = bool(args.hop_probe)
+        HOP.record_episode = True
+        hop_blocks = install_hopfield(
+            model,
+            alpha=args.hop_alpha,
+            beta=args.hop_beta,
+            temp=args.hop_temp,
+            qgroup=args.hop_qgroup,
+            n_state_tokens=args.pladis_n_state_tokens,
+            schedule=args.hop_schedule,
+            adaptive=args.hop_adaptive,
+            norm=args.hop_norm,
+        )
+        print(f"[arm] Hopfield installed on blocks {hop_blocks}", flush=True)
 
     # model/arm tag for the video header, e.g.
     # "GR00T N1.7 (libero_10) | action x text (scale=1)"
@@ -751,6 +899,23 @@ def main():
         arm_tag += f" nag t={args.pladis_nag_tau:g} r={args.pladis_nag_rho:g}"
     elif args.pladis_install and args.pladis_nag_probe:
         arm_tag += " nag probe"
+    if args.hop_install:
+        # the self-block arm is part of what a reviewer watching the video is judging
+        if args.hop_probe:
+            hop_tag = "hop probe"
+        else:
+            hop_tag = f"hop a={args.hop_alpha:g} b={args.hop_beta:g}"
+            if args.hop_temp != 1.0:
+                hop_tag += f" t={args.hop_temp:g}"
+            if args.hop_qgroup != "all":
+                hop_tag += f" q={args.hop_qgroup}"
+            if args.hop_schedule != "all":
+                hop_tag += f" sched {args.hop_schedule}"
+            if args.hop_adaptive:
+                hop_tag += " adap"
+            if args.hop_norm != "l2":
+                hop_tag += " norm off"
+        arm_tag = hop_tag if not args.pladis_install else f"{arm_tag} + {hop_tag}"
     video_label = f"{model_tag} | {arm_tag}"
 
     from harness.env import RUNTIME_RNG_AXES
@@ -761,11 +926,15 @@ def main():
         _assert_pi05_delivery(sess, ts, todo[0], model)
     elif args.model == "smolvla" and args.pladis_install:
         _assert_smolvla_delivery(sess, ts, todo[0], model)
-    elif (args.model == "gr00t_n17" and args.pladis_install
-          and (args.pladis_schedule != "all" or args.pladis_nag_tau is not None)):
+    elif args.model == "gr00t_n17" and (
+        (args.pladis_install
+         and (args.pladis_schedule != "all" or args.pladis_nag_tau is not None))
+        or args.hop_install
+    ):
         _assert_n17_delivery(sess, ts, todo[0], model,
-                             schedule=args.pladis_schedule != "all",
-                             nag=args.pladis_nag_tau is not None)
+                             schedule=args.pladis_install and args.pladis_schedule != "all",
+                             nag=args.pladis_install and args.pladis_nag_tau is not None,
+                             hop=args.hop_install)
 
     instruction_map = (
         (lambda spec: _task_meta_instruction(spec.base_task))
@@ -783,6 +952,12 @@ def main():
         # episode's R, never a duplicated row). Header written only on a fresh file.
         rstats = _RStatsWriter(args.out, R_THRESHOLDS)
         NAG.clear_episode()  # the delivery warm-up's census is not an episode
+    hopstats = None
+    if args.hop_install:
+        from pladis.attn_gr00t_n17 import HOP
+
+        hopstats = _HopStatsWriter(args.out)
+        HOP.clear_episode()  # the delivery warm-up's census is not an episode
 
     t0, n_succ, n_run = time.time(), 0, 0
     for spec in todo:
@@ -811,6 +986,12 @@ def main():
             summary, rows = NAG.episode_stats()
             rstats.write(r.episode, r.success_once, summary, rows)
             NAG.clear_episode()
+        if hopstats is not None:
+            from pladis.attn_gr00t_n17 import HOP
+
+            summary, rows = HOP.episode_stats()
+            hopstats.write(r.episode, r.success_once, summary, rows)
+            HOP.clear_episode()
         n_run += 1
         n_succ += r.success_once
         if n_run % 10 == 0:
