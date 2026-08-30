@@ -25,8 +25,24 @@ MODEL_ROOT="$MODEL_ROOT_GR00T_N17"
 pladis_require_clean_tree
 SUITES="libero_10 libero_goal libero_object libero_spatial"
 
-run() { # $1=tag, rest = pladis args
+# 2026-08-31 arm selection (the noise driver's idiom, needed the moment a row runs
+# on a machine that holds none of the earlier eplogs — a no-arg invocation there
+# would re-collect every arm since July). The vocabulary is read off this file's
+# own `run <tag>` lines, so it cannot drift from them; a command-line selection
+# only FILTERS it, and an unknown name aborts instead of silently running nothing.
+ARMS="$(grep -oE '^run [^ ]+' "${BASH_SOURCE[0]}" | awk '{print $2}' | tr '\n' ' ')"
+if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
+for a in $SELECT; do
+  case " $ARMS " in
+    *" $a "*) ;;
+    *) echo "[robot] ABORT: unknown arm '$a'; this axis carries: $ARMS" >&2; exit 2 ;;
+  esac
+done
+echo "[robot] arms: $SELECT"
+
+run() { # $1=tag, rest = pladis args; a tag outside $SELECT is skipped
   local tag="$1"; shift
+  case " $SELECT " in *" $tag "*) ;; *) return 0 ;; esac
   for S in $SUITES; do
     local out="results/sweep/n17_robot_${tag}_${S}_eplog.tsv"
     echo "[robot] === $tag / $S ($(date +%H:%M:%S)) ==="
@@ -128,6 +144,10 @@ run allxt-inc-l2  --pladis-install --pladis-scale 2.0 --pladis-qgroup all --plad
 run allxt-temp20-late-l2 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-schedule 0,0,1,1
 
 # ---- OLD-BASIS base0 (eager-dense) arm, gated ----
+# 2026-08-31: the gate runs only when base0 is SELECTED. Its reference eplog
+# lives on machine A only; unguarded, a machine-B invocation of a later row
+# (hop-*) died here with exit 1 before reaching its own run lines.
+case " $SELECT " in *" base0 "*)
 REF=results/sweep/n17_lang_base0_libero_10_eplog.tsv
 if [ ! -f "$REF" ]; then
   echo "[robot] ABORT base0: parity reference $REF missing (run sweep_n17_language.sh first)"
@@ -160,6 +180,7 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 echo "[robot] base0 parity gate PASSED"
+;; esac
 run base0 --pladis-install --pladis-scale 1.0 --pladis-method softmax
 
 # 2026-08-26 NAG normalization row (docs/nag.md; operator's 260821 deck §2 "NAG
@@ -190,6 +211,11 @@ run allxt-temp20-nagn-l20 --pladis-install --pladis-scale 2.0 --pladis-method so
 # arm was null (07-31). The phase-0 outcome split on this axis is the strongest
 # of the four (eta fail-succ z=-4.35) and points the other way, alpha<1.
 # COST: ~5.2 h each at 1,550 eps; 10 arms ~ 52 h.
+# vanilla-b = vanilla RE-COLLECTED ON THE MACHINE THAT RUNS THIS ROW (SETUP.md §0:
+# pairing is per machine; `vanilla` was collected on machine A in July, so on
+# machine B the deployable reading `hop - vanilla` needs its own vanilla, and
+# `vanilla-b - vanilla` measures the machine term). Skip it on machine A.
+run vanilla-b
 run hop-dense          --hop-install --hop-alpha 1    --hop-beta 1
 run hop-a050b1         --hop-install --hop-alpha 0.5  --hop-beta 1
 run hop-a150b1         --hop-install --hop-alpha 1.5  --hop-beta 1

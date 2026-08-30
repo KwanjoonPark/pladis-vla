@@ -13,11 +13,15 @@ pladis_require_clean_tree
 # libero_10 first: its checkpoint is already local, buying download time
 SUITES="libero_10 libero_goal libero_object libero_spatial"
 
-# wait for the parity gate (3 DONEs), max 40 min
-for _ in $(seq 1 240); do
-  [ "$(grep -c "\[arm\] DONE" results/parity_gate.out 2>/dev/null)" -ge 3 ] && break
-  sleep 10
-done
+# wait for the parity gate (3 DONEs), max 40 min — a July-15 chaining guard; only
+# meaningful where that gate's log exists (machine A). Elsewhere it would idle
+# 40 min for a file that never appears (2026-08-31).
+if [ -f results/parity_gate.out ]; then
+  for _ in $(seq 1 240); do
+    [ "$(grep -c "\[arm\] DONE" results/parity_gate.out 2>/dev/null)" -ge 3 ] && break
+    sleep 10
+  done
+fi
 
 wait_ckpt() {  # suite checkpoints are downloaded in the background; block until present
   until [ -f "$MODEL_ROOT/$1/config.json" ] && ! ls "$MODEL_ROOT/$1"/*.incomplete >/dev/null 2>&1; do
@@ -25,8 +29,21 @@ wait_ckpt() {  # suite checkpoints are downloaded in the background; block until
   done
 }
 
-run() { # $1=tag, rest = pladis args
+# 2026-08-31 arm selection (the noise driver's idiom; see sweep_n17_robot.sh for
+# why). Vocabulary = this file's own `run <tag>` lines; a selection only filters.
+ARMS="$(grep -oE '^run [^ ]+' "${BASH_SOURCE[0]}" | awk '{print $2}' | tr '\n' ' ')"
+if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
+for a in $SELECT; do
+  case " $ARMS " in
+    *" $a "*) ;;
+    *) echo "[sweep] ABORT: unknown arm '$a'; this axis carries: $ARMS" >&2; exit 2 ;;
+  esac
+done
+echo "[sweep] arms: $SELECT"
+
+run() { # $1=tag, rest = pladis args; a tag outside $SELECT is skipped
   local tag="$1"; shift
+  case " $SELECT " in *" $tag "*) ;; *) return 0 ;; esac
   for S in $SUITES; do
     local out="results/sweep/n17_lang_${tag}_${S}_eplog.tsv"
     wait_ckpt "$S"
@@ -205,6 +222,9 @@ run allxt-temp20l40 --pladis-install --pladis-scale 4.0 --pladis-method softmax 
 # temperature control at matched displacement (d ~0.23 vs ~0.17-0.19 for |delta|=.5).
 # Every hop arm records eta / clamp / beta_eff per episode (<out>.hopstats*.tsv).
 # COST: ~5.1 h each at 1,537 eps; 10 arms ~ 51 h.
+# vanilla-b = vanilla re-collected on the machine that runs this row (see the
+# robot driver's note); skip it on machine A, where `vanilla` already lives.
+run vanilla-b
 run hop-dense          --hop-install --hop-alpha 1    --hop-beta 1
 run hop-a050b1         --hop-install --hop-alpha 0.5  --hop-beta 1
 run hop-a150b1         --hop-install --hop-alpha 1.5  --hop-beta 1

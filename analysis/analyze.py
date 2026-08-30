@@ -182,11 +182,17 @@ def noise_cat(task_name):
 # temperature control at matched displacement (t150b1 vs a150b1 / a050b1).
 HOP_ARMS = ["hop-dense", "hop-a050b1", "hop-a075b1", "hop-a125b1", "hop-a150b1",
             "hop-a200b1", "hop-t150b1", "hop-a110b5", "hop-a110b5-nonorm",
-            "hop-a150b1-adap"]
+            "hop-a150b1-adap",
+            # vanilla re-collected on the machine that runs the row (SETUP.md §0);
+            # exists only where the row ran off machine A. `vanilla-b - vanilla`
+            # is the machine term, and the deployable reading there is vs vanilla-b.
+            "vanilla-b"]
+_HOP_ONLY = [a for a in HOP_ARMS if a.startswith("hop-")]
 HOP_CONTRASTS = (
-    [("hop-dense", "vanilla")]
-    + [(a, "hop-dense") for a in HOP_ARMS if a != "hop-dense"]
-    + [(a, "vanilla") for a in HOP_ARMS if a != "hop-dense"]
+    [("hop-dense", "vanilla"), ("vanilla-b", "vanilla"), ("hop-dense", "vanilla-b")]
+    + [(a, "hop-dense") for a in _HOP_ONLY if a != "hop-dense"]
+    + [(a, "vanilla") for a in _HOP_ONLY if a != "hop-dense"]
+    + [(a, "vanilla-b") for a in _HOP_ONLY if a != "hop-dense"]
     + [("hop-a150b1", "hop-a050b1"), ("hop-a125b1", "hop-a075b1"),
        ("hop-a110b5", "hop-a150b1"), ("hop-a110b5-nonorm", "hop-a110b5"),
        ("hop-a150b1-adap", "hop-a150b1"),
