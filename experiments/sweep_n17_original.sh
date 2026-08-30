@@ -63,7 +63,9 @@ allxt-temp20l20 allxt-temp20l15 allxt-temp20 \
 allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 \
 allxt-temp20l30 allxt-temp20-nagn-l10 allxt-temp20-nagn-l15 \
 allxt-temp20-nagn-l20 allxt-temp20-nagn-l30 allxtext \
-allxt-temp20-r allxt-temp20l20-r allxt-temp20-nagn-l20-r allxt-temp20l25"
+allxt-temp20-r allxt-temp20l20-r allxt-temp20-nagn-l20-r allxt-temp20l25 \
+hop-dense hop-a050b1 hop-a150b1 hop-a075b1 hop-a125b1 hop-a200b1 hop-t150b1 \
+hop-a110b5 hop-a110b5-nonorm hop-a150b1-adap"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -232,5 +234,22 @@ run allxt-temp20-nagn-l20-r --pladis-install --pladis-scale 2.0 --pladis-method 
 # bottomed out? Probe on (bit-identical rollout, R recorded), so the in-dist R
 # census gains a rung too. COST: ~50 min at ~7 s/ep.
 run allxt-temp20l25 --pladis-install --pladis-scale 2.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
+
+# 2026-08-31 the SELF-ATTENTION row (docs/hopfield.md §7; same 10 arms as the
+# language/robot drivers, see the language driver's comment block). On this
+# in-distribution axis the row is the CONTROL the paper's Table 4 makes
+# mandatory: circulation control degraded the top-20% (already-good) samples
+# there, so "does it hurt where nothing is wrong?" is read here, cheaply.
+# COST: ~1.3 h each at ORIG_EPISODES=100 (400 eps); 10 arms ~ 13 h.
+run hop-dense          --hop-install --hop-alpha 1    --hop-beta 1
+run hop-a050b1         --hop-install --hop-alpha 0.5  --hop-beta 1
+run hop-a150b1         --hop-install --hop-alpha 1.5  --hop-beta 1
+run hop-a075b1         --hop-install --hop-alpha 0.75 --hop-beta 1
+run hop-a125b1         --hop-install --hop-alpha 1.25 --hop-beta 1
+run hop-a200b1         --hop-install --hop-alpha 2    --hop-beta 1
+run hop-t150b1         --hop-install --hop-temp 1.5   --hop-beta 1
+run hop-a110b5         --hop-install --hop-alpha 1.1  --hop-beta 5
+run hop-a110b5-nonorm  --hop-install --hop-alpha 1.1  --hop-beta 5 --hop-norm off
+run hop-a150b1-adap    --hop-install --hop-alpha 1.5  --hop-beta 1 --hop-adaptive
 
 echo "[orig] ALL DONE $(date +%H:%M:%S)"

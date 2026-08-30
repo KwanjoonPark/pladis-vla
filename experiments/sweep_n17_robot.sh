@@ -183,4 +183,22 @@ run base0 --pladis-install --pladis-scale 1.0 --pladis-method softmax
 # free where the dose already works. Control: allxt-temp20l20 (collected).
 run allxt-temp20-nagn-l20 --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
 
+# 2026-08-31 the SELF-ATTENTION row (docs/hopfield.md §7; same 10 arms as the
+# language driver, same reasons — see the comment block there). This is the
+# axis the deck's hypothesis names: "moderate skew lets the trajectory re-aim
+# under a new state" predicts alpha>1 helps HERE, where every cross-block text
+# arm was null (07-31). The phase-0 outcome split on this axis is the strongest
+# of the four (eta fail-succ z=-4.35) and points the other way, alpha<1.
+# COST: ~5.2 h each at 1,550 eps; 10 arms ~ 52 h.
+run hop-dense          --hop-install --hop-alpha 1    --hop-beta 1
+run hop-a050b1         --hop-install --hop-alpha 0.5  --hop-beta 1
+run hop-a150b1         --hop-install --hop-alpha 1.5  --hop-beta 1
+run hop-a075b1         --hop-install --hop-alpha 0.75 --hop-beta 1
+run hop-a125b1         --hop-install --hop-alpha 1.25 --hop-beta 1
+run hop-a200b1         --hop-install --hop-alpha 2    --hop-beta 1
+run hop-t150b1         --hop-install --hop-temp 1.5   --hop-beta 1
+run hop-a110b5         --hop-install --hop-alpha 1.1  --hop-beta 5
+run hop-a110b5-nonorm  --hop-install --hop-alpha 1.1  --hop-beta 5 --hop-norm off
+run hop-a150b1-adap    --hop-install --hop-alpha 1.5  --hop-beta 1 --hop-adaptive
+
 echo "[robot] ALL DONE $(date +%H:%M:%S)"

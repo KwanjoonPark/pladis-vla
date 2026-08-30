@@ -171,6 +171,28 @@ def noise_cat(task_name):
 # intervention): `tag` builds the eplog prefix as f"{model_tag}_{axis_tag}", and cat/cats
 # are the per-category breakdown. `extra_arms`/`extra_contrasts` here are keyed BY MODEL,
 # because they name concrete arm tags.
+
+# 2026-08-31 the SELF-ATTENTION row (docs/hopfield.md §7), identical on language /
+# robot / original so it is declared once. Primary comparator = hop-dense (the
+# odd-block eager-dense control; alpha=1 is bit-identical to the manual dense path),
+# which cancels the fused-vs-eager kernel term the way base_dense does on pi05;
+# vs vanilla is the deployable reading. Then the questions of docs/hopfield.md §5.1:
+# the sign (a150 vs a050), matched first-order dose extrapolated+normalized vs direct
+# (a110b5 vs a150b1), the rescale alone (-nonorm), adaptive vs static, and the
+# temperature control at matched displacement (t150b1 vs a150b1 / a050b1).
+HOP_ARMS = ["hop-dense", "hop-a050b1", "hop-a075b1", "hop-a125b1", "hop-a150b1",
+            "hop-a200b1", "hop-t150b1", "hop-a110b5", "hop-a110b5-nonorm",
+            "hop-a150b1-adap"]
+HOP_CONTRASTS = (
+    [("hop-dense", "vanilla")]
+    + [(a, "hop-dense") for a in HOP_ARMS if a != "hop-dense"]
+    + [(a, "vanilla") for a in HOP_ARMS if a != "hop-dense"]
+    + [("hop-a150b1", "hop-a050b1"), ("hop-a125b1", "hop-a075b1"),
+       ("hop-a110b5", "hop-a150b1"), ("hop-a110b5-nonorm", "hop-a110b5"),
+       ("hop-a150b1-adap", "hop-a150b1"),
+       ("hop-a150b1", "hop-t150b1"), ("hop-a050b1", "hop-t150b1")]
+)
+
 AXES = {
     "layout": {"tag": "layout", "cat": layout_cat,
                "cats": ["add", "level_sample", "moved_level"],
@@ -293,7 +315,9 @@ AXES = {
                                 "allxt-temp20l40",
                                 "allxt-temp20-nagn-l40", "allxt-temp20-nagnr-l40",
                                 # 08-30 the lambda=2.5 rung (R recorded via the probe)
-                                "allxt-temp20l25"]},
+                                "allxt-temp20l25",
+                                # 08-31 the self-attention (Hopfield) row
+                                *HOP_ARMS]},
                  "extra_contrasts": {"n17": [
                      ("allxtext", "actionxtext"), ("allxtext", "vanilla"),
                      ("axt-sxi", "actionxtext"), ("axt-sxi", "vanilla"),
@@ -438,6 +462,8 @@ AXES = {
                      # 08-06 low-dose rung: vs vanilla, plus the 0.5 -> 1.0
                      # dose step (higher dose listed first, as in axt/axt10)
                      ("axi05", "vanilla"), ("axi10", "axi05"),
+                     # 08-31 the self-attention (Hopfield) row
+                     *HOP_CONTRASTS,
                  ]},
                  # The climbing-side DiD (docs/nag.md §5.1): does the cap flatten
                  # a ladder that is RISING? It should not (that is Failure A) —
@@ -682,7 +708,9 @@ AXES = {
                              #   point (docs/nag.md §7 Tier 1). Like language,
                              #   this axis peaks at lambda=2, so the cap is read
                              #   where the dose already works.
-                             "allxt-temp20-nagn-l20"]},
+                             "allxt-temp20-nagn-l20",
+                             # 08-31 the self-attention (Hopfield) row
+                             *HOP_ARMS]},
               "extra_contrasts": {"n17": [
                   ("actionxtext15", "vanilla"), ("actionxtext15", "actionxtext"),
                   ("actionxtext20", "vanilla"), ("actionxtext20", "actionxtext15"),
@@ -730,6 +758,8 @@ AXES = {
                   # so a negative here prices the guardrail where the dose works.
                   ("allxt-temp20-nagn-l20", "allxt-temp20l20"),
                   ("allxt-temp20-nagn-l20", "vanilla"),
+                  # 08-31 the self-attention (Hopfield) row
+                  *HOP_CONTRASTS,
               ]}},
     # original: axis=none — original instructions, original scenes, nothing
     # perturbed. This is the campaign's IN-DISTRIBUTION control, and the reason
@@ -768,7 +798,9 @@ AXES = {
                                 "allxt-temp20-r", "allxt-temp20l20-r",
                                 "allxt-temp20-nagn-l20-r",
                                 # 08-31 the lambda=2.5 rung of the falling ladder
-                                "allxt-temp20l25"]},
+                                "allxt-temp20l25",
+                                # 08-31 the self-attention (Hopfield) row
+                                *HOP_ARMS]},
                  "extra_contrasts": {"n17": [
                      # the 07-16 lambda=1 modality grid, each vs vanilla, plus
                      # the locus contrast that carries the story on language
@@ -851,6 +883,8 @@ AXES = {
                      ("allxt-temp20l25", "allxt-temp20"),
                      ("allxt-temp20l25", "allxt-temp20l20"),
                      ("allxt-temp20l30", "allxt-temp20l25"),
+                     # 08-31 the self-attention (Hopfield) row
+                     *HOP_CONTRASTS,
                  ]},
                  # The plateau itself: does the cap shrink the walk from this axis's
                  # optimum (lambda=1) to the shared setting (lambda=2), and to 3?

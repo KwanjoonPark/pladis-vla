@@ -123,9 +123,20 @@ class _Acc:
             else:
                 dst[k] = dst.get(k, 0) + v
 
-    def take(self, success: int):
+    def take(self, success: int, episode: int = -1, n_steps: int = -1, eps_tsv=None):
         summary, rows = HOP.episode_stats()
         self.eps.append((success, summary, rows))
+        if eps_tsv is not None:
+            # One row per episode WITH its length: the outcome split of the per-episode
+            # means is confounded by episode length (a failed episode runs to the step
+            # cap and its mean is dominated by the stuck states), and only the
+            # per-episode rows can separate "unstable retrieval causes failure" from
+            # "failure produces unstable-looking states" (docs/hopfield.md §6).
+            if eps_tsv.tell() == 0:
+                eps_tsv.write("\t".join(["episode", "success_once", "n_steps"] + list(summary)) + "\n")
+            eps_tsv.write("\t".join([str(episode), str(success), str(n_steps)]
+                                    + [f"{summary[k]:.6g}" for k in summary]) + "\n")
+            eps_tsv.flush()
         self._add(self.eta_hist, HOP.eta_hist)
         self._add(self.al_hist, HOP.al_hist)
         self._add(self.p_hist, HOP.p_hist)
@@ -299,6 +310,10 @@ def main():
     sess = LiberoPlusSession(seed=args.seed,
                              per_episode_np_seed=axis in RUNTIME_RNG_AXES)
     acc = _Acc()
+    os.makedirs("results/diag", exist_ok=True)
+    eps_path = f"results/diag/hop_{args.axis}_{args.suite}_eps.tsv"
+    eps_tsv = open(eps_path, "w")
+    print(f"[diag] per-episode rows -> {eps_path}", flush=True)
     t0 = time.time()
     for i, ep in enumerate(sched, 1):
         with torch.no_grad():
@@ -307,7 +322,7 @@ def main():
                             max_steps=args.max_steps, exec_horizon=args.exec_horizon)
         if i == 1:
             print(f"[diag] delivery: {assert_hopfield_delivered()}", flush=True)
-        acc.take(int(r.success_once))
+        acc.take(int(r.success_once), episode=ep.episode, n_steps=int(r.n_steps), eps_tsv=eps_tsv)
         print(f"[diag] {i}/{len(sched)} {'OK ' if r.success_once else 'FAIL'} "
               f"({(time.time() - t0) / i:.1f}s/ep)", flush=True)
     sess.close()

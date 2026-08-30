@@ -294,23 +294,122 @@ fused-vs-eager floor**, the row is not launched. η̄ decides whether an
 adaptive arm is meaningful: if the median η̄ exceeds 0.9 at every block, the
 adaptive arm is dropped as a near-copy of `hop-dense`.
 
-Measurement tables: to be filled by the first run (language and robot,
-`libero_goal`, 40 episodes each).
+The measurement is cheap (40 episodes ≈ 20 min per axis; noise ≈ 1 h for
+the blur), so it runs on **all four axes** — language, robot, original,
+noise — `libero_goal`, 40 episodes each (`results/diag/run_rung0.sh`,
+outputs `results/diag/hop_<axis>_goal.out`). Whether η̄ and Align differ by
+perturbation type is itself a reading.
+
+### 6.1 The measurement (2026-08-31, libero_goal, 40 eps/axis, trajectory of `allxt-temp20l20`)
+
+**The self-attention structure is a property of the model, not of the
+perturbation.** The block profiles of η̄ and Align agree across the four
+axes to the second decimal:
+
+| block | 1 | 3 | 5 | 7 | 9 | 11 | 13 | 15 | 17 | 19 | 21 | 23 | 25 | 27 | 29 | 31 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| η̄ p50 (language) | .14 | .20 | .33 | .44 | .48 | .40 | .77 | .84 | .73 | .59 | .39 | .40 | .35 | .53 | .61 | .60 |
+| Align mean (language) | +.21 | −.01 | +.04 | +.48 | +.35 | +.02 | −.47 | −.65 | −.53 | −.42 | −.17 | −.18 | −.12 | −.11 | −.02 | −.12 |
+
+Early blocks (1, 3) are circulation-heavy (η̄ ≈ 0.15), the middle (13, 15)
+symmetric-dominant (η̄ ≈ 0.8), the rest ≈ 0.5; η̄ is flat across denoising
+steps (p50 0.47 → 0.43). Align is positive around block 7 and **strongly
+negative at blocks 13–19** (−0.44 … −0.65): in the paper's terms the
+retrieval there points *against* its own local field — not the stable
+attractor regime the paper's stable samples show. Adaptive control
+therefore has room in the early blocks and self-extinguishes in the middle.
+
+| axis | succ/fail | E | r | Align | η̄ | η̄ fail−succ (z) | Align p10 fail−succ (z) |
+|---|---|---|---|---|---|---|---|
+| language | 31/9 | 12.97 | .592 | −.106 | .447 | −.018 (−2.84) | +.008 (+1.48) |
+| robot | 27/13 | 12.81 | .585 | −.096 | .433 | −.014 (−4.35) | +.014 (+5.28) |
+| original | 38/2 | 8.59 | .579 | −.084 | .435 | (n=2) | (n=2) |
+| noise | 35/5 | 7.99 | .579 | −.085 | .426 | −.012 (−3.17) | +.013 (+2.36) |
+
+Two readings. (i) **E splits the axes**: the instruction and embodiment
+perturbations raise the retrieval "energy" by ~50 % over the in-distribution
+set, the pixel corruption does not — the OOD that reaches the action
+transformer's tokens is the OOD it registers as less stable retrieval
+(qualitative: E scales with feature norms, and the 40-episode task mixes
+differ per axis). (ii) **Failed episodes are more circulation-heavy on every
+axis with failures** (η̄ lower, same sign 3/3, z −2.8 … −4.4) and their worst
+Align is less extreme. The sign is the *opposite* of the deck's guess
+("moderate skew helps adapt") — it points at α < 1. **Caveat, being
+tested:** a failed episode runs to the step cap and its per-episode mean is
+dominated by the stuck states, so the split may be consequence rather than
+cause; the per-episode rows (`hop_<axis>_goal_eps.tsv`, Rung 0b) carry
+`n_steps` for that check.
+
+**Price list** (identical on the four axes to the second decimal;
+per-(head, row) relative displacement `d`, median / mean):
+
+| α | 0.5 | 0.75 | 0.9 | 1.1 | 1.25 | 1.5 | 2.0 | τ=1.25 | τ=1.5 | τ=2 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| d p50 | .17–.19 | .09 | .04 | .04 | .08–.09 | .15–.17 | .29–.32 | .12–.13 | .22–.25 | .38–.44 |
+| d/(α−1) | −.46 | −.45 | −.44 | +.43 | +.43 | +.42 | +.40 | | | |
+
+`d` is **linear in (α−1) on both sides** (0.40–0.48), so the first-order
+dose `δ = β(α−1)` of §2(c) holds numerically; it is flat across steps and
+varies little across blocks (0.15–0.26 at α=1.5). The fused-vs-eager floor
+is 2.8e-3 (every grid point clears 3× of it by ≥ 5×). The norm-match clamp
+never binds at β ≤ 2; at β=5 it binds on 1–5 % of rows (α ≥ 1.5) and 11–20 %
+for τ ≥ 2.
+
+### 6.2 The pre-registered magnitude rule is saturated — and replaced
+
+The rule said: match the even-block reference. Measured, that reference —
+the NAG-probe displacement of `allxt-temp20l20` on its own text blocks — is
+**1.11–1.16**, four times the largest displacement on the α grid (0.32 at
+α=2) and larger than the feature's own norm. Extrapolating the linear
+price list, matching it would need |α−1| ≈ 2.7 (α ≈ −1.7 or 4.7), which is
+outside any regime the decomposition describes. So the rule picks the grid
+ends and calls it a match; that is not a match, it is a saturated rule, and
+it is recorded here rather than applied.
+
+What it does establish: the cross-block intervention the campaign found
+effective is a far larger perturbation of the retrieved feature than any
+circulation-scaling of the self blocks, so the two loci cannot be compared
+at "equal displacement" — the self-block row is a study of a *different
+magnitude regime*, and its arms are chosen on their own price list:
+
+- **α ladder at β = 1** (the un-normalized α-retrieval family; the
+  norm-match is inert at β=1 by §2(d) and would not bind anyway):
+  α ∈ {0.5, 0.75, 1.25, 1.5, 2.0} = δ ∈ {−.5, −.25, +.25, +.5, +1}, d ≈
+  {.19, .09, .09, .17, .31}. Both signs, because the outcome split points
+  at α < 1 and the deck at α > 1.
+- **One matched-δ extrapolation pair**: (α=1.1, β=5) against (α=1.5, β=1),
+  both δ = +0.5, d ≈ 0.17 — the second-order/normalization question of
+  §2(c)–(d) in one contrast, plus its `--hop-norm off` twin.
+- **Temperature control τ = 1.5** (d ≈ 0.22–0.25), matched to the |δ| = 0.5
+  arms (α = 0.5 / 1.5, d ≈ 0.17–0.19; τ = 1.25 at 0.12 would match the
+  |δ| = 0.25 arms — one control, at the strength where an effect is likeliest).
+- **Adaptive** on α = 1.5, β = 1: `β_eff = 1 − η̄` (≈ 0.55 on average, → 0 at
+  blocks 13–15), `α_eff = 0.5·η̄`.
+
+The 3× floor rule stands (all grid points pass), and the adaptive arm is
+kept (lowest median η̄ +0.13–0.14 at block 1, far below the 0.9 cut).
 
 ## 7. Arms
 
 Provisional, at the paper's operating points; α and τ are replaced by the
-§6 values before any `run` line is committed. Language and robot axes first
-(one axis per machine, SETUP.md §0); ~5 h/arm.
+§6 values before any `run` line is committed. Axis order: language (the
+additivity question, endpoint 4), robot (the deck's OOD-adaptation reading),
+and **original** — 400 episodes, ~1.3 h/arm, the in-distribution control
+that the paper's top-20 % degradation (Table 4) makes mandatory — first;
+`noise` (20–50 h/arm, the motion-blur cost) only for the arms those three
+axes select. One axis per machine (SETUP.md §0); ~5 h/arm on the big axes.
+
+The row as registered (2026-08-31, from §6.2; 10 arms, one `run` line each
+in `sweep_n17_{language,robot,original}.sh`):
 
 | arm | flags | reads against |
 |---|---|---|
 | `hop-dense` | `--hop-install --hop-alpha 1 --hop-beta 1` | vanilla (the odd-block eager term) |
-| `hop-a090b5`, `hop-a095b5`, `hop-a105b5`, `hop-a110b5` | `--hop-beta 5`, α ∈ {.90, .95, 1.05, 1.10} | δ ∈ {−.5, −.25, +.25, +.5}; each vs `hop-dense` and vs vanilla; the two signs against each other |
-| `hop-a075b1`, `hop-a125b1` | `--hop-beta 1` | matched-δ (±.25) un-normalized family, vs its β=5 twin |
-| `hop-a105b5-nonorm` | `--hop-norm off` | vs `hop-a105b5`: extrapolation vs rescale |
-| `hop-a110b5-adap` | `--hop-adaptive` | vs `hop-a110b5` |
-| `hop-t{τ}b1` | `--hop-temp τ --hop-beta 1` | vs `hop-dense` and vs the hop arm it is matched to |
+| `hop-a050b1`, `hop-a075b1`, `hop-a125b1`, `hop-a150b1`, `hop-a200b1` | `--hop-beta 1`, α ∈ {.5, .75, 1.25, 1.5, 2} | δ ∈ {−.5, −.25, +.25, +.5, +1}; each vs `hop-dense` (primary) and vs vanilla; a150 vs a050 (the sign) |
+| `hop-a110b5` | `--hop-alpha 1.1 --hop-beta 5` | vs `hop-a150b1`: matched δ = +.5, extrapolated + normalized vs direct |
+| `hop-a110b5-nonorm` | `… --hop-norm off` | vs `hop-a110b5`: the rescale alone |
+| `hop-a150b1-adap` | `--hop-alpha 1.5 --hop-beta 1 --hop-adaptive` | vs `hop-a150b1` |
+| `hop-t150b1` | `--hop-temp 1.5 --hop-beta 1` | vs `hop-dense`; vs `hop-a150b1` and `hop-a050b1` at matched d |
 | later: `hop-{best}-late` (`--hop-schedule 0,0,1,1`), `allxt-late-l2-hop-{best}` | | the late-step and the combined arm, once a direction exists |
 
 ## 8. Gates (CPU, no checkpoint) — `experiments/verify_hopfield.py`

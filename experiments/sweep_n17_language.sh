@@ -191,4 +191,29 @@ run allxt-temp20l25 --pladis-install --pladis-scale 2.5 --pladis-method softmax 
 # ladder (P(R>3) was already 11.5% at lambda=2.5). COST: ~5.1 h.
 run allxt-temp20l40 --pladis-install --pladis-scale 4.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
 
+# 2026-08-31 the SELF-ATTENTION row (docs/hopfield.md §7; operator's 260821 deck §3):
+# Hopfield sym/skew circulation control on the 16 ODD blocks, which no collected
+# arm has ever touched. Values come from the phase-0 price list (§6.1-6.2, this
+# machine, 4 axes agree): d is linear in (alpha-1) at ~0.43/unit, so the ladder is
+# alpha at beta=1 (norm-match inert there); both signs, because the outcome split
+# (failed episodes are more circulation-heavy, z -2.8..-4.4) points at alpha<1
+# while the deck's hypothesis points at alpha>1. hop-dense = the odd-block
+# eager-dense control (alpha=1 is bit-identical to the manual dense path), the
+# primary comparator: hop - hop-dense cancels the fused-vs-eager kernel term.
+# a110b5 vs a150b1 = same first-order dose (beta*(alpha-1) = 0.5), extrapolated +
+# normalized vs direct; -nonorm isolates the rescale; t150b1 = the paper's
+# temperature control at matched displacement (d ~0.23 vs ~0.17-0.19 for |delta|=.5).
+# Every hop arm records eta / clamp / beta_eff per episode (<out>.hopstats*.tsv).
+# COST: ~5.1 h each at 1,537 eps; 10 arms ~ 51 h.
+run hop-dense          --hop-install --hop-alpha 1    --hop-beta 1
+run hop-a050b1         --hop-install --hop-alpha 0.5  --hop-beta 1
+run hop-a150b1         --hop-install --hop-alpha 1.5  --hop-beta 1
+run hop-a075b1         --hop-install --hop-alpha 0.75 --hop-beta 1
+run hop-a125b1         --hop-install --hop-alpha 1.25 --hop-beta 1
+run hop-a200b1         --hop-install --hop-alpha 2    --hop-beta 1
+run hop-t150b1         --hop-install --hop-temp 1.5   --hop-beta 1
+run hop-a110b5         --hop-install --hop-alpha 1.1  --hop-beta 5
+run hop-a110b5-nonorm  --hop-install --hop-alpha 1.1  --hop-beta 5 --hop-norm off
+run hop-a150b1-adap    --hop-install --hop-alpha 1.5  --hop-beta 1 --hop-adaptive
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"
