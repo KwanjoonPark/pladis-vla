@@ -184,4 +184,11 @@ run allxt-temp20-nagn-l30 --pladis-install --pladis-scale 3.0 --pladis-method so
 # dose where the plain ladder is still rising. COST: ~5.1 h.
 run allxt-temp20l25 --pladis-install --pladis-scale 2.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
 
+# 2026-08-31 (operator request) plain lambda=4 on the climbing axis: lambda 2 / 2.5 / 3
+# read 87.90 / 87.96 / 88.55 — flat, no turnover. This asks whether it EVER turns
+# over; machine B runs the same rung inside its condition-2 battery, so this is
+# also the A-side of that reading. Probe on for the R census at the top of the
+# ladder (P(R>3) was already 11.5% at lambda=2.5). COST: ~5.1 h.
+run allxt-temp20l40 --pladis-install --pladis-scale 4.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
+
 echo "[sweep] ALL DONE $(date +%H:%M:%S)"

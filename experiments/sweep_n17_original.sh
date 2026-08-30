@@ -63,7 +63,7 @@ allxt-temp20l20 allxt-temp20l15 allxt-temp20 \
 allxtext20 allxt-late-l2 allxt-inc-l2 allxt-temp20-late-l2 \
 allxt-temp20l30 allxt-temp20-nagn-l10 allxt-temp20-nagn-l15 \
 allxt-temp20-nagn-l20 allxt-temp20-nagn-l30 allxtext \
-allxt-temp20-r allxt-temp20l20-r allxt-temp20-nagn-l20-r"
+allxt-temp20-r allxt-temp20l20-r allxt-temp20-nagn-l20-r allxt-temp20l25"
 if [ "$#" -gt 0 ]; then SELECT="$*"; else SELECT="$ARMS"; fi
 for a in $SELECT; do
   case " $ARMS " in
@@ -226,5 +226,11 @@ run allxtext --pladis-install --pladis-scale 1.0 --pladis-qgroup all --pladis-ki
 run allxt-temp20-r          --pladis-install --pladis-scale 1.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
 run allxt-temp20l20-r       --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
 run allxt-temp20-nagn-l20-r --pladis-install --pladis-scale 2.0 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-tau 2.5
+
+# 2026-08-31 (operator request) lambda=2.5 on the falling axis: the rung between
+# the lambda=2 loss (-2.25) and lambda=3 (-2.50) — does the fall continue or has it
+# bottomed out? Probe on (bit-identical rollout, R recorded), so the in-dist R
+# census gains a rung too. COST: ~50 min at ~7 s/ep.
+run allxt-temp20l25 --pladis-install --pladis-scale 2.5 --pladis-method softmax --pladis-beta 2.0 --pladis-qgroup all --pladis-kind text --pladis-nag-probe
 
 echo "[orig] ALL DONE $(date +%H:%M:%S)"

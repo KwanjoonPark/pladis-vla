@@ -766,7 +766,9 @@ AXES = {
                                 "allxtext",
                                 # 08-30 ratio-diagnostic re-runs (R recorded per episode)
                                 "allxt-temp20-r", "allxt-temp20l20-r",
-                                "allxt-temp20-nagn-l20-r"]},
+                                "allxt-temp20-nagn-l20-r",
+                                # 08-31 the lambda=2.5 rung of the falling ladder
+                                "allxt-temp20l25"]},
                  "extra_contrasts": {"n17": [
                      # the 07-16 lambda=1 modality grid, each vs vanilla, plus
                      # the locus contrast that carries the story on language
@@ -832,6 +834,11 @@ AXES = {
                      ("allxt-temp20-r", "allxt-temp20"),
                      ("allxt-temp20l20-r", "allxt-temp20l20"),
                      ("allxt-temp20-nagn-l20-r", "allxt-temp20-nagn-l20"),
+                     # 2026-08-31 lambda=2.5: vs vanilla, the axis optimum, and both neighbours
+                     ("allxt-temp20l25", "vanilla"),
+                     ("allxt-temp20l25", "allxt-temp20"),
+                     ("allxt-temp20l25", "allxt-temp20l20"),
+                     ("allxt-temp20l30", "allxt-temp20l25"),
                  ]},
                  # The plateau itself: does the cap shrink the walk from this axis's
                  # optimum (lambda=1) to the shared setting (lambda=2), and to 3?
